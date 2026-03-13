@@ -1,0 +1,10 @@
+ultralytics>=8.0.0
+torch>=2.0.0
+mss>=9.0.0
+opencv-python>=4.6.0
+numpy>=1.23.0
+pandas>=1.5.0
+pyautogui>=0.9.50
+keyboard>=0.13.5
+flask>=3.0.0
+pyinstaller>=6.0.0

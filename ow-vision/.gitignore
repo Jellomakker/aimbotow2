@@ -1,0 +1,7 @@
+ai-env
+.venv
+__pycache__
+*.pyc
+videos
+datasets
+olddatasets
