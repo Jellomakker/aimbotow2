@@ -316,7 +316,7 @@ class Detection:
 
         frame_count = 0
         last_status_time = 0
-        hold_grace = 0.2  # seconds to keep holding after losing target (prevents flicker)
+        hold_grace = 0.6  # seconds to keep holding after losing target (prevents flicker)
 
         with mss() as stc:
             while self.running:
@@ -403,7 +403,7 @@ class Detection:
                     # Aim assist — aims at upper 5th center of body bbox (head area)
                     if aim_assist:
                         aim_x = target_cx
-                        aim_y = y1 + (y2 - y1) * 0.05  # very top of body box = head
+                        aim_y = y1  # very top edge of body box
 
                         off_x = aim_x - center[0]
                         off_y = aim_y - center[1]
