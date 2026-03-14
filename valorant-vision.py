@@ -18,9 +18,8 @@ import math
 import time
 import threading
 import ctypes
-import struct
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -43,6 +42,9 @@ def _find_models():
 
 def _resolve_model(name):
     """Return absolute path to a model file."""
+    # If it's already a full path (e.g. from file picker), use directly
+    if os.path.isabs(name) and os.path.isfile(name):
+        return name
     for d in [_SCRIPT_DIR, _MODELS_DIR]:
         p = os.path.join(d, name)
         if os.path.isfile(p):
@@ -175,7 +177,11 @@ class Detection:
         center = [w // 2, h // 2]
 
         model_path = _resolve_model(s["model"])
-        self._notify(f"Loading model {s['model']}…")
+        if not os.path.isfile(model_path):
+            self._notify(f"Model not found: {model_path}")
+            self.running = False
+            return
+        self._notify(f"Loading model {os.path.basename(model_path)}\u2026")
         try:
             model = YOLO(model_path)
         except Exception as e:
@@ -302,7 +308,7 @@ class App(tk.Tk):
         self.title("Valorant Vision")
         self.configure(bg=self.BG)
         self.resizable(False, False)
-        self.geometry("420x620")
+        self.geometry("420x680")
 
         self._detection = None
         self._models = _find_models()
@@ -329,7 +335,7 @@ class App(tk.Tk):
 
         # Model selector
         self._add_label(body, "MODEL")
-        self._model_var = tk.StringVar(value=self._models[-1] if self._models else "v2.pt")
+        self._model_var = tk.StringVar(value=self._models[-1] if self._models else "")
         mf = tk.Frame(body, bg=self.BG)
         mf.pack(fill="x", pady=(0, 12))
         for m in self._models:
@@ -340,20 +346,31 @@ class App(tk.Tk):
                 font=("Segoe UI", 10), indicatoron=0, padx=14, pady=5,
                 bd=0, relief="flat", highlightthickness=0,
             ).pack(side="left", padx=(0, 6))
+        tk.Button(
+            mf, text="Browse .pt", font=("Segoe UI", 9),
+            bg=self.INPUT_BG, fg=self.DIM, bd=0, relief="flat",
+            activebackground=self.BG2, activeforeground=self.FG,
+            command=self._browse_model,
+        ).pack(side="left", padx=(10, 0))
 
-        # Target selector
+        # Target — individual on/off checkboxes
         self._add_label(body, "TARGET")
-        self._target_var = tk.StringVar(value="head")
         tf = tk.Frame(body, bg=self.BG)
         tf.pack(fill="x", pady=(0, 12))
-        for txt, val in [("Head", "head"), ("Body", "body"), ("Both", "both")]:
-            tk.Radiobutton(
-                tf, text=txt, variable=self._target_var, value=val,
-                bg=self.BG, fg=self.FG, selectcolor=self.BG2,
-                activebackground=self.BG, activeforeground=self.ACCENT2,
-                font=("Segoe UI", 10), indicatoron=0, padx=14, pady=5,
-                bd=0, relief="flat", highlightthickness=0,
-            ).pack(side="left", padx=(0, 6))
+        self._head_var = tk.BooleanVar(value=True)
+        self._body_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            tf, text="Head", variable=self._head_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(side="left", padx=(0, 12))
+        tk.Checkbutton(
+            tf, text="Body", variable=self._body_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(side="left")
 
         # Settings row
         row = tk.Frame(body, bg=self.BG)
@@ -381,10 +398,27 @@ class App(tk.Tk):
         self._conf_var = tk.StringVar(value="0.70")
         self._make_entry(f3, self._conf_var)
 
+        # Trigger delay row
+        row_delay = tk.Frame(body, bg=self.BG)
+        row_delay.pack(fill="x", pady=(0, 12))
+        row_delay.columnconfigure((0, 1), weight=1)
+
+        fd = tk.Frame(row_delay, bg=self.BG)
+        fd.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._add_label(fd, "TRIGGER DELAY (s)")
+        self._delay_var = tk.StringVar(value="0.0")
+        self._make_entry(fd, self._delay_var)
+
+        fd2 = tk.Frame(row_delay, bg=self.BG)
+        fd2.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self._add_label(fd2, "SCALE")
+        self._sc_var = tk.StringVar(value="5")
+        self._make_entry(fd2, self._sc_var)
+
         # Resolution row
         row2 = tk.Frame(body, bg=self.BG)
         row2.pack(fill="x", pady=(0, 12))
-        row2.columnconfigure((0, 1, 2), weight=1)
+        row2.columnconfigure((0, 1), weight=1)
 
         fw = tk.Frame(row2, bg=self.BG)
         fw.grid(row=0, column=0, sticky="ew", padx=(0, 6))
@@ -397,12 +431,6 @@ class App(tk.Tk):
         self._add_label(fh, "HEIGHT")
         self._h_var = tk.StringVar(value="1080")
         self._make_entry(fh, self._h_var)
-
-        fs = tk.Frame(row2, bg=self.BG)
-        fs.grid(row=0, column=2, sticky="ew", padx=(6, 0))
-        self._add_label(fs, "SCALE")
-        self._sc_var = tk.StringVar(value="5")
-        self._make_entry(fs, self._sc_var)
 
         # Checkboxes row
         chk_frame = tk.Frame(body, bg=self.BG)
@@ -461,6 +489,14 @@ class App(tk.Tk):
         return e
 
     # ── actions ──
+    def _browse_model(self):
+        path = filedialog.askopenfilename(
+            title="Select YOLO model",
+            filetypes=[("YOLO model", "*.pt"), ("All files", "*.*")],
+        )
+        if path:
+            self._model_var.set(path)
+
     def _toggle(self):
         if self._detection and self._detection.running:
             self._stop()
@@ -468,14 +504,34 @@ class App(tk.Tk):
             self._start()
 
     def _start(self):
-        target_map = {"head": [1], "body": [0], "both": [0, 1]}
+        # Build detect list from checkboxes
+        detect = []
+        if self._head_var.get():
+            detect.append(1)
+        if self._body_var.get():
+            detect.append(0)
+        if not detect:
+            messagebox.showwarning("No target", "Turn on at least Head or Body.")
+            return
+
+        model_val = self._model_var.get()
+        if not model_val:
+            messagebox.showwarning("No model", "Select a .pt model file.")
+            return
+
+        # If user browsed to a full path, use it directly
+        if os.path.isfile(model_val):
+            model_key = model_val
+        else:
+            model_key = model_val
+
         settings = {
-            "model": self._model_var.get(),
-            "detect": target_map.get(self._target_var.get(), [1]),
+            "model": model_key,
+            "detect": detect,
             "toggleKey": self._key_var.get() or "`",
             "cooldown": float(self._cd_var.get() or 1.1),
             "confidence": float(self._conf_var.get() or 0.70),
-            "triggerDelay": 0,
+            "triggerDelay": float(self._delay_var.get() or 0),
             "monitorWidth": int(self._w_var.get() or 1920),
             "monitorHeight": int(self._h_var.get() or 1080),
             "monitorScale": int(self._sc_var.get() or 5),
