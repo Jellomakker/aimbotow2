@@ -437,18 +437,10 @@ class Detection:
                             time.sleep(delay)
 
                         if fire_mode == "rapid":
-                            # Rapid mode: hold mouse down, fire in bursts
+                            # Rapid mode: hold mouse down while on target
                             if not self._mouse_held:
-                                self._burst_remaining = random.randint(burst_min, burst_max)
                                 _real_mouse_down()
                                 self._mouse_held = True
-                            # Count down burst (each frame = ~1 shot at game fire rate)
-                            self._burst_remaining -= 1
-                            if self._burst_remaining <= 0:
-                                # Release briefly between bursts
-                                _real_mouse_up()
-                                self._mouse_held = False
-                                time.sleep(random.uniform(0.04, 0.12))
                         else:
                             # Single mode
                             _real_click()
