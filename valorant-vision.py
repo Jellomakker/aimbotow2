@@ -403,7 +403,7 @@ class Detection:
                     # Aim assist — aims at upper 5th center of body bbox (head area)
                     if aim_assist:
                         aim_x = target_cx
-                        aim_y = y1 + (y2 - y1) * 0.10  # upper 5th middle = head on body box
+                        aim_y = y1 + (y2 - y1) * 0.05  # very top of body box = head
 
                         off_x = aim_x - center[0]
                         off_y = aim_y - center[1]
