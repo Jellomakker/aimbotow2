@@ -202,7 +202,7 @@ class Detection:
         self.settings = settings
         self.status_cb = status_cb
         self.running = False
-        self.triggerbot = False
+        self.triggerbot = settings.get("autoFire", True)
         self.last_click = 0
         self._toggle_cooldown = 0
         self._thread = None
@@ -352,7 +352,16 @@ class Detection:
                 if now - last_status_time > 0.5:
                     last_status_time = now
                     tb = "ON" if self.triggerbot else "OFF"
-                    self._notify(f"TB: {tb} | Detected: {n_det} | Frames: {frame_count}")
+                    aim_status = ""
+                    if closest_idx != -1:
+                        r2 = df.iloc[closest_idx]
+                        bx1, by1, bx2, by2 = int(r2.xmin), int(r2.ymin), int(r2.xmax), int(r2.ymax)
+                        on_target = bx1 <= center[0] <= bx2 and by1 <= center[1] <= by2
+                        if on_target:
+                            aim_status = " | AIM: ON TARGET"
+                        else:
+                            aim_status = " | AIM: off target"
+                    self._notify(f"TB: {tb} | Det: {n_det} | F: {frame_count}{aim_status}")
 
                 if closest_idx != -1:
                     r = df.iloc[closest_idx]
@@ -495,7 +504,7 @@ class App(tk.Tk):
         f2 = tk.Frame(row, bg=self.BG)
         f2.grid(row=0, column=1, sticky="ew", padx=3)
         self._add_label(f2, "COOLDOWN (s)")
-        self._cd_var = tk.StringVar(value="1.1")
+        self._cd_var = tk.StringVar(value="0.3")
         self._make_entry(f2, self._cd_var)
 
         # Confidence
@@ -580,7 +589,16 @@ class App(tk.Tk):
         chk_frame = tk.Frame(body, bg=self.BG)
         chk_frame.pack(fill="x", pady=(0, 12))
 
-        self._still_var = tk.BooleanVar(value=True)
+        self._autofire_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            chk_frame, text="Auto-fire on start (no toggle key needed)",
+            variable=self._autofire_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        self._still_var = tk.BooleanVar(value=False)
         tk.Checkbutton(
             chk_frame, text="Only click when standing still",
             variable=self._still_var,
@@ -673,8 +691,8 @@ class App(tk.Tk):
             "model": model_key,
             "detect": detect,
             "toggleKey": self._key_var.get() or "`",
-            "cooldown": float(self._cd_var.get() or 1.1),
-            "confidence": float(self._conf_var.get() or 0.70),
+            "cooldown": float(self._cd_var.get() or 0.3),
+            "confidence": float(self._conf_var.get() or 0.35),
             "triggerMinDelay": float(self._delay_min_var.get() or 0),
             "triggerMaxDelay": float(self._delay_max_var.get() or 0),
             "monitorWidth": int(self._w_var.get() or 1920),
@@ -682,6 +700,7 @@ class App(tk.Tk):
             "monitorScale": int(self._sc_var.get() or 5),
             "onlyWhenStill": self._still_var.get(),
             "showOverlay": self._overlay_var.get(),
+            "autoFire": self._autofire_var.get(),
             "strafeEnabled": self._strafe_var.get(),
             "strafeMinDelay": float(self._strafe_min_var.get() or 0),
             "strafeMaxDelay": float(self._strafe_max_var.get() or 0.05),
