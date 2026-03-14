@@ -16,6 +16,7 @@ import os
 import sys
 import math
 import time
+import random
 import threading
 import ctypes
 import tkinter as tk
@@ -28,16 +29,32 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _MODELS_DIR = os.path.join(_SCRIPT_DIR, "models")
 
 
+def _model_search_dirs():
+    """All directories where .pt models might live."""
+    dirs = [_SCRIPT_DIR, _MODELS_DIR]
+    # Also check common relative locations
+    for sub in ["ow-vision/models", "ow-vision", "..", "../models"]:
+        d = os.path.normpath(os.path.join(_SCRIPT_DIR, sub))
+        if d not in dirs:
+            dirs.append(d)
+    # Also check user's Downloads folder
+    home = os.path.expanduser("~")
+    for sub in ["Downloads", "Desktop", "Documents"]:
+        d = os.path.join(home, sub)
+        if d not in dirs:
+            dirs.append(d)
+    return dirs
+
+
 def _find_models():
     """Return list of .pt files available."""
-    dirs = [_SCRIPT_DIR, _MODELS_DIR]
     found = set()
-    for d in dirs:
+    for d in _model_search_dirs():
         if os.path.isdir(d):
             for f in os.listdir(d):
                 if f.endswith(".pt"):
                     found.add(f)
-    return sorted(found) if found else ["v2.pt"]
+    return sorted(found) if found else []
 
 
 def _resolve_model(name):
@@ -45,11 +62,11 @@ def _resolve_model(name):
     # If it's already a full path (e.g. from file picker), use directly
     if os.path.isabs(name) and os.path.isfile(name):
         return name
-    for d in [_SCRIPT_DIR, _MODELS_DIR]:
+    for d in _model_search_dirs():
         p = os.path.join(d, name)
         if os.path.isfile(p):
             return p
-    return os.path.join(_MODELS_DIR, name)
+    return name  # return as-is so error message is clear
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +137,31 @@ def _is_moving():
     return False
 
 
+def _get_strafe_direction():
+    """Return which horizontal key is held, or None."""
+    try:
+        import keyboard
+        if keyboard.is_pressed("a"):
+            return "a"
+        if keyboard.is_pressed("d"):
+            return "d"
+    except Exception:
+        pass
+    return None
+
+
+def _counter_strafe(direction, duration=0.03):
+    """Tap the opposite key to stop movement instantly."""
+    try:
+        import keyboard
+        opposite = "d" if direction == "a" else "a"
+        keyboard.press(opposite)
+        time.sleep(duration)
+        keyboard.release(opposite)
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Detection engine (runs in a background thread)
 # ---------------------------------------------------------------------------
@@ -178,7 +220,7 @@ class Detection:
 
         model_path = _resolve_model(s["model"])
         if not os.path.isfile(model_path):
-            self._notify(f"Model not found: {model_path}")
+            self._notify(f"Model not found: {s['model']} — use Browse to pick your .pt file")
             self.running = False
             return
         self._notify(f"Loading model {os.path.basename(model_path)}\u2026")
@@ -196,6 +238,11 @@ class Detection:
         show_overlay = s.get("showOverlay", False)
         only_still = s.get("onlyWhenStill", True)
         stop_key = s.get("stopKey", "F6")
+        strafe_enabled = s.get("strafeEnabled", False)
+        strafe_min = s.get("strafeMinDelay", 0.0)
+        strafe_max = s.get("strafeMaxDelay", 0.05)
+        trigger_min = s.get("triggerMinDelay", 0.0)
+        trigger_max = s.get("triggerMaxDelay", 0.0)
 
         with mss() as stc:
             while self.running:
@@ -261,15 +308,24 @@ class Detection:
                     x1, y1, x2, y2 = int(r.xmin), int(r.ymin), int(r.xmax), int(r.ymax)
                     in_range = x1 <= center[0] <= x2 and y1 <= center[1] <= y2
 
-                    can_click = (
-                        in_range
-                        and self.triggerbot
-                        and now - self.last_click > s["cooldown"]
-                        and (not only_still or not _is_moving())
-                    )
+                    if in_range and self.triggerbot and now - self.last_click > s["cooldown"]:
+                        # Counter-strafe: if moving sideways, tap opposite key to stop
+                        if strafe_enabled:
+                            strafe_dir = _get_strafe_direction()
+                            if strafe_dir:
+                                strafe_delay = random.uniform(strafe_min, strafe_max)
+                                time.sleep(strafe_delay)
+                                _counter_strafe(strafe_dir)
+                                # Small wait for velocity to zero out
+                                time.sleep(0.02)
+                        elif only_still and _is_moving():
+                            # Skip if "only when still" is on and we're moving
+                            continue
 
-                    if can_click:
-                        time.sleep(s["triggerDelay"])
+                        # Random trigger delay
+                        delay = random.uniform(trigger_min, trigger_max)
+                        if delay > 0:
+                            time.sleep(delay)
                         _real_click()
                         self.last_click = now
 
@@ -308,7 +364,7 @@ class App(tk.Tk):
         self.title("Valorant Vision")
         self.configure(bg=self.BG)
         self.resizable(False, False)
-        self.geometry("420x680")
+        self.geometry("420x820")
 
         self._detection = None
         self._models = _find_models()
@@ -398,22 +454,59 @@ class App(tk.Tk):
         self._conf_var = tk.StringVar(value="0.70")
         self._make_entry(f3, self._conf_var)
 
-        # Trigger delay row
+        # Trigger delay row (min / max)
+        self._add_label(body, "TRIGGER DELAY (s)")
         row_delay = tk.Frame(body, bg=self.BG)
         row_delay.pack(fill="x", pady=(0, 12))
-        row_delay.columnconfigure((0, 1), weight=1)
+        row_delay.columnconfigure((0, 1, 2), weight=1)
 
-        fd = tk.Frame(row_delay, bg=self.BG)
-        fd.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        self._add_label(fd, "TRIGGER DELAY (s)")
-        self._delay_var = tk.StringVar(value="0.0")
-        self._make_entry(fd, self._delay_var)
+        fd_min = tk.Frame(row_delay, bg=self.BG)
+        fd_min.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._add_label(fd_min, "MIN")
+        self._delay_min_var = tk.StringVar(value="0.0")
+        self._make_entry(fd_min, self._delay_min_var)
 
-        fd2 = tk.Frame(row_delay, bg=self.BG)
-        fd2.grid(row=0, column=1, sticky="ew", padx=(6, 0))
-        self._add_label(fd2, "SCALE")
+        fd_max = tk.Frame(row_delay, bg=self.BG)
+        fd_max.grid(row=0, column=1, sticky="ew", padx=3)
+        self._add_label(fd_max, "MAX")
+        self._delay_max_var = tk.StringVar(value="0.05")
+        self._make_entry(fd_max, self._delay_max_var)
+
+        fd_sc = tk.Frame(row_delay, bg=self.BG)
+        fd_sc.grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        self._add_label(fd_sc, "SCALE")
         self._sc_var = tk.StringVar(value="5")
-        self._make_entry(fd2, self._sc_var)
+        self._make_entry(fd_sc, self._sc_var)
+
+        # Counter-strafe section
+        self._add_label(body, "COUNTER-STRAFE")
+        strafe_frame = tk.Frame(body, bg=self.BG)
+        strafe_frame.pack(fill="x", pady=(0, 4))
+
+        self._strafe_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            strafe_frame, text="Auto counter-strafe before shooting",
+            variable=self._strafe_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        row_strafe = tk.Frame(body, bg=self.BG)
+        row_strafe.pack(fill="x", pady=(0, 12))
+        row_strafe.columnconfigure((0, 1), weight=1)
+
+        fs_min = tk.Frame(row_strafe, bg=self.BG)
+        fs_min.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._add_label(fs_min, "STRAFE MIN DELAY (s)")
+        self._strafe_min_var = tk.StringVar(value="0.0")
+        self._make_entry(fs_min, self._strafe_min_var)
+
+        fs_max = tk.Frame(row_strafe, bg=self.BG)
+        fs_max.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self._add_label(fs_max, "STRAFE MAX DELAY (s)")
+        self._strafe_max_var = tk.StringVar(value="0.05")
+        self._make_entry(fs_max, self._strafe_max_var)
 
         # Resolution row
         row2 = tk.Frame(body, bg=self.BG)
@@ -531,12 +624,16 @@ class App(tk.Tk):
             "toggleKey": self._key_var.get() or "`",
             "cooldown": float(self._cd_var.get() or 1.1),
             "confidence": float(self._conf_var.get() or 0.70),
-            "triggerDelay": float(self._delay_var.get() or 0),
+            "triggerMinDelay": float(self._delay_min_var.get() or 0),
+            "triggerMaxDelay": float(self._delay_max_var.get() or 0),
             "monitorWidth": int(self._w_var.get() or 1920),
             "monitorHeight": int(self._h_var.get() or 1080),
             "monitorScale": int(self._sc_var.get() or 5),
             "onlyWhenStill": self._still_var.get(),
             "showOverlay": self._overlay_var.get(),
+            "strafeEnabled": self._strafe_var.get(),
+            "strafeMinDelay": float(self._strafe_min_var.get() or 0),
+            "strafeMaxDelay": float(self._strafe_max_var.get() or 0.05),
             "stopKey": "F6",
         }
 
