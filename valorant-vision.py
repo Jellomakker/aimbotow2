@@ -268,12 +268,13 @@ class Detection:
         mw, mh = s["monitorWidth"], s["monitorHeight"]
         sc = s["monitorScale"]
 
-        left = int(mw / 2 - mw / sc / 2)
-        top = int(mh / 2 - mh / sc / 2)
-        w = int(mw / sc)
-        h = int(mh / sc)
-        monitor = {"left": left, "top": top, "width": w, "height": h}
-        center = [w // 2, h // 2]
+        # Capture a centered region of the screen
+        cap_w = int(mw / sc)
+        cap_h = int(mh / sc)
+        left = int((mw - cap_w) / 2)
+        top = int((mh - cap_h) / 2)
+        monitor = {"left": left, "top": top, "width": cap_w, "height": cap_h}
+        center = [cap_w // 2, cap_h // 2]
 
         model_path = _resolve_model(s["model"])
         if not os.path.isfile(model_path):
@@ -342,7 +343,8 @@ class Detection:
                     classes=s["detect"],
                     conf=s["confidence"],
                     iou=0.45,
-                    imgsz=640,
+                    imgsz=1280,
+                    augment=True,
                     verbose=False,
                     device=device,
                     half=False,
@@ -363,7 +365,7 @@ class Detection:
                         bw = x2 - x1
                         bh = y2 - y1
                         # Filter out tiny detections (noise) and huge ones (background)
-                        if bw < 10 or bh < 15 or bw > w * 0.6 or bh > h * 0.8:
+                        if bw < 6 or bh < 8 or bw > cap_w * 0.6 or bh > cap_h * 0.8:
                             continue
                         cx = (x2 - x1) / 2 + x1
                         cy = (y2 - y1) / 2 + y1
@@ -589,7 +591,7 @@ class App(tk.Tk):
         self._add_label(body, "TARGET")
         tf = tk.Frame(body, bg=self.BG)
         tf.pack(fill="x", pady=(0, 12))
-        self._head_var = tk.BooleanVar(value=False)
+        self._head_var = tk.BooleanVar(value=True)
         self._body_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
             tf, text="Head", variable=self._head_var,
@@ -627,7 +629,7 @@ class App(tk.Tk):
         f3 = tk.Frame(row, bg=self.BG)
         f3.grid(row=0, column=2, sticky="ew", padx=(6, 0))
         self._add_label(f3, "CONFIDENCE")
-        self._conf_var = tk.StringVar(value="0.45")
+        self._conf_var = tk.StringVar(value="0.40")
         self._make_entry(f3, self._conf_var)
 
         # Trigger delay row (min / max)
@@ -651,7 +653,7 @@ class App(tk.Tk):
         fd_sc = tk.Frame(row_delay, bg=self.BG)
         fd_sc.grid(row=0, column=2, sticky="ew", padx=(6, 0))
         self._add_label(fd_sc, "SCALE")
-        self._sc_var = tk.StringVar(value="3")
+        self._sc_var = tk.StringVar(value="1.5")
         self._make_entry(fd_sc, self._sc_var)
 
         # Resolution row
