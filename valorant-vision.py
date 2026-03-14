@@ -316,7 +316,7 @@ class Detection:
 
         frame_count = 0
         last_status_time = 0
-        hold_grace = 0.6  # seconds to keep holding after losing target (prevents flicker)
+        hold_grace = s.get("holdGrace", 0.6)  # seconds to keep holding after losing target
 
         with mss() as stc:
             while self.running:
@@ -781,6 +781,17 @@ class App(tk.Tk):
         self._prox_px_var = tk.StringVar(value="30")
         self._make_entry(fp_px, self._prox_px_var)
 
+        # Spray hold setting
+        hold_row = tk.Frame(body, bg=self.BG)
+        hold_row.pack(fill="x", pady=(0, 12))
+        hold_row.columnconfigure((0,), weight=1)
+
+        fh_grace = tk.Frame(hold_row, bg=self.BG)
+        fh_grace.grid(row=0, column=0, sticky="ew")
+        self._add_label(fh_grace, "SPRAY HOLD (s) — keep firing after target lost")
+        self._hold_grace_var = tk.StringVar(value="0.6")
+        self._make_entry(fh_grace, self._hold_grace_var)
+
         # Start / Stop button
         self._btn = tk.Button(
             body, text="START", font=("Segoe UI", 13, "bold"),
@@ -874,6 +885,7 @@ class App(tk.Tk):
             "burstMax": int(self._burst_max_var.get() or 7),
             "proximityEnabled": self._prox_var.get(),
             "proximityPx": int(self._prox_px_var.get() or 30),
+            "holdGrace": float(self._hold_grace_var.get() or 0.6),
             "stopKey": "F6",
         }
 
