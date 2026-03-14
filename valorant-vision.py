@@ -400,10 +400,10 @@ class Detection:
                     target_cx = (x1 + x2) / 2
                     target_cy = (y1 + y2) / 2
 
-                    # Aim assist — aims at upper 5th center of bounding box
+                    # Aim assist — aims at upper 5th center of body bbox (head area)
                     if aim_assist:
                         aim_x = target_cx
-                        aim_y = y1 + (y2 - y1) * 0.10  # upper 5th middle
+                        aim_y = y1 + (y2 - y1) * 0.10  # upper 5th middle = head on body box
 
                         off_x = aim_x - center[0]
                         off_y = aim_y - center[1]
@@ -579,8 +579,8 @@ class App(tk.Tk):
         self._add_label(body, "TARGET")
         tf = tk.Frame(body, bg=self.BG)
         tf.pack(fill="x", pady=(0, 12))
-        self._head_var = tk.BooleanVar(value=True)
-        self._body_var = tk.BooleanVar(value=False)
+        self._head_var = tk.BooleanVar(value=False)
+        self._body_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
             tf, text="Head", variable=self._head_var,
             bg=self.BG, fg=self.FG, selectcolor=self.BG2,
