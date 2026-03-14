@@ -329,8 +329,7 @@ class Detection:
         only_still = s.get("onlyWhenStill", True)
         aim_assist = s.get("aimAssist", False)
         aim_strength = s.get("aimStrength", 0.4)
-        aim_input_mult = s.get("aimInputMultiplier", 0.5)  # 0=full user, 1=full aim assist
-        aim_head_only = s.get("aimHeadOnly", True)
+        aim_input_mult = s.get("aimInputMultiplier", 0.5)
         stop_key = s.get("stopKey", "F6")
         strafe_enabled = s.get("strafeEnabled", False)
         strafe_min = s.get("strafeMinDelay", 0.0)
@@ -425,20 +424,13 @@ class Detection:
                 if closest_idx != -1:
                     r = df.iloc[closest_idx]
                     x1, y1, x2, y2 = int(r.xmin), int(r.ymin), int(r.xmax), int(r.ymax)
-                    det_cls = int(r["class"]) if "class" in r.index else -1
                     target_cx = (x1 + x2) / 2
                     target_cy = (y1 + y2) / 2
 
-                    # Aim assist — head priority: aim at top-center of bbox
-                    # if head detection, or if aimHeadOnly, aim at top 25%
+                    # Aim assist — ALWAYS aims at head (top of bounding box)
                     if aim_assist:
-                        if aim_head_only or det_cls == 1:
-                            # Aim at head area (top 25% of bounding box)
-                            aim_x = target_cx
-                            aim_y = y1 + (y2 - y1) * 0.15
-                        else:
-                            aim_x = target_cx
-                            aim_y = target_cy
+                        aim_x = target_cx
+                        aim_y = y1 + (y2 - y1) * 0.15  # top 15% = head area
 
                         off_x = aim_x - center[0]
                         off_y = aim_y - center[1]
@@ -772,17 +764,8 @@ class App(tk.Tk):
 
         self._aim_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
-            aim_frame, text="Enable aim assist",
+            aim_frame, text="Enable aim assist (always aims at head)",
             variable=self._aim_var,
-            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
-            activebackground=self.BG, activeforeground=self.FG,
-            font=("Segoe UI", 10), bd=0, highlightthickness=0,
-        ).pack(anchor="w")
-
-        self._aim_head_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(
-            aim_frame, text="Aim at head (even if body detected)",
-            variable=self._aim_head_var,
             bg=self.BG, fg=self.FG, selectcolor=self.BG2,
             activebackground=self.BG, activeforeground=self.FG,
             font=("Segoe UI", 10), bd=0, highlightthickness=0,
@@ -951,7 +934,6 @@ class App(tk.Tk):
             "aimAssist": self._aim_var.get(),
             "aimStrength": max(0.01, min(1.0, float(self._aim_str_var.get() or 0.4))),
             "aimInputMultiplier": max(0.0, min(1.0, float(self._aim_mult_var.get() or 0.5))),
-            "aimHeadOnly": self._aim_head_var.get(),
             "fireMode": self._fire_mode_var.get(),
             "burstMin": int(self._burst_min_var.get() or 3),
             "burstMax": int(self._burst_max_var.get() or 7),
