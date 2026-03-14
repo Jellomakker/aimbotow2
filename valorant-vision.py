@@ -284,6 +284,9 @@ class Detection:
         trigger_min = s.get("triggerMinDelay", 0.0)
         trigger_max = s.get("triggerMaxDelay", 0.0)
 
+        frame_count = 0
+        last_status_time = 0
+
         with mss() as stc:
             while self.running:
                 # Global stop hotkey (F6 by default)
@@ -297,6 +300,7 @@ class Detection:
                 closest_dist = 1e9
                 closest_idx = -1
                 now = time.time()
+                frame_count += 1
 
                 shot = np.array(stc.grab(monitor))
                 shot = cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
@@ -342,6 +346,13 @@ class Detection:
                         self._notify("Triggerbot ON" if self.triggerbot else "Triggerbot OFF")
                 except Exception:
                     pass
+
+                # Live status update every 0.5s
+                n_det = len(df)
+                if now - last_status_time > 0.5:
+                    last_status_time = now
+                    tb = "ON" if self.triggerbot else "OFF"
+                    self._notify(f"TB: {tb} | Detected: {n_det} | Frames: {frame_count}")
 
                 if closest_idx != -1:
                     r = df.iloc[closest_idx]
@@ -491,7 +502,7 @@ class App(tk.Tk):
         f3 = tk.Frame(row, bg=self.BG)
         f3.grid(row=0, column=2, sticky="ew", padx=(6, 0))
         self._add_label(f3, "CONFIDENCE")
-        self._conf_var = tk.StringVar(value="0.70")
+        self._conf_var = tk.StringVar(value="0.35")
         self._make_entry(f3, self._conf_var)
 
         # Trigger delay row (min / max)
