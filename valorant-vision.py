@@ -104,24 +104,16 @@ def _resolve_model(name):
 # ---------------------------------------------------------------------------
 # Real mouse click via Windows SendInput (works in games)
 # ---------------------------------------------------------------------------
-def _real_click():
-    """Send a hardware-level left mouse click using Win32 SendInput."""
+# ---- Win32 mouse helpers ----
+_MOUSEEVENTF_LEFTDOWN = 0x0002
+_MOUSEEVENTF_LEFTUP = 0x0004
+_INPUT_MOUSE = 0
+
+
+def _send_mouse_event(flags):
+    """Low-level SendInput for mouse flags."""
     if sys.platform != "win32":
-        # Fallback for non-Windows (won't work in games but won't crash)
-        try:
-            import pyautogui
-            pyautogui.click()
-        except Exception:
-            pass
         return
-
-    MOUSEEVENTF_LEFTDOWN = 0x0002
-    MOUSEEVENTF_LEFTUP = 0x0004
-    INPUT_MOUSE = 0
-
-    # MOUSEINPUT struct: dx, dy, mouseData, dwFlags, time, dwExtraInfo
-    # INPUT struct: type, union(MOUSEINPUT)
-    # On 64-bit Windows, INPUT is 40 bytes
     extra = ctypes.POINTER(ctypes.c_ulong)()
 
     class MOUSEINPUT(ctypes.Structure):
@@ -142,16 +134,35 @@ def _real_click():
             ("ii", _INPUT),
         ]
 
-    def _send(flags):
-        inp = INPUT()
-        inp.type = INPUT_MOUSE
-        inp.ii.mi.dwFlags = flags
-        inp.ii.mi.dwExtraInfo = extra
-        ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+    inp = INPUT()
+    inp.type = _INPUT_MOUSE
+    inp.ii.mi.dwFlags = flags
+    inp.ii.mi.dwExtraInfo = extra
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
 
-    _send(MOUSEEVENTF_LEFTDOWN)
+
+def _real_click():
+    """Send a single hardware-level left click."""
+    if sys.platform != "win32":
+        try:
+            import pyautogui
+            pyautogui.click()
+        except Exception:
+            pass
+        return
+    _send_mouse_event(_MOUSEEVENTF_LEFTDOWN)
     time.sleep(0.02)
-    _send(MOUSEEVENTF_LEFTUP)
+    _send_mouse_event(_MOUSEEVENTF_LEFTUP)
+
+
+def _real_mouse_down():
+    """Hold left mouse button down."""
+    _send_mouse_event(_MOUSEEVENTF_LEFTDOWN)
+
+
+def _real_mouse_up():
+    """Release left mouse button."""
+    _send_mouse_event(_MOUSEEVENTF_LEFTUP)
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +254,8 @@ class Detection:
         self.last_click = 0
         self._toggle_cooldown = 0
         self._thread = None
+        self._mouse_held = False  # track if we're holding left click (rapid mode)
+        self._burst_remaining = 0  # shots left in current burst
 
     def start(self):
         if self.running:
@@ -316,12 +329,19 @@ class Detection:
         only_still = s.get("onlyWhenStill", True)
         aim_assist = s.get("aimAssist", False)
         aim_strength = s.get("aimStrength", 0.4)
+        aim_input_mult = s.get("aimInputMultiplier", 0.5)  # 0=full user, 1=full aim assist
+        aim_head_only = s.get("aimHeadOnly", True)
         stop_key = s.get("stopKey", "F6")
         strafe_enabled = s.get("strafeEnabled", False)
         strafe_min = s.get("strafeMinDelay", 0.0)
         strafe_max = s.get("strafeMaxDelay", 0.05)
         trigger_min = s.get("triggerMinDelay", 0.0)
         trigger_max = s.get("triggerMaxDelay", 0.0)
+        fire_mode = s.get("fireMode", "single")  # "single" or "rapid"
+        burst_min = int(s.get("burstMin", 3))
+        burst_max = int(s.get("burstMax", 7))
+        proximity_enabled = s.get("proximityEnabled", False)
+        proximity_px = s.get("proximityPx", 30)  # pixels from bbox edge
 
         frame_count = 0
         last_status_time = 0
@@ -405,21 +425,45 @@ class Detection:
                 if closest_idx != -1:
                     r = df.iloc[closest_idx]
                     x1, y1, x2, y2 = int(r.xmin), int(r.ymin), int(r.xmax), int(r.ymax)
+                    det_cls = int(r["class"]) if "class" in r.index else -1
                     target_cx = (x1 + x2) / 2
                     target_cy = (y1 + y2) / 2
 
-                    # Aim assist — move mouse toward target center
+                    # Aim assist — head priority: aim at top-center of bbox
+                    # if head detection, or if aimHeadOnly, aim at top 25%
                     if aim_assist:
-                        off_x = target_cx - center[0]
-                        off_y = target_cy - center[1]
-                        move_x = off_x * aim_strength
-                        move_y = off_y * aim_strength
+                        if aim_head_only or det_cls == 1:
+                            # Aim at head area (top 25% of bounding box)
+                            aim_x = target_cx
+                            aim_y = y1 + (y2 - y1) * 0.15
+                        else:
+                            aim_x = target_cx
+                            aim_y = target_cy
+
+                        off_x = aim_x - center[0]
+                        off_y = aim_y - center[1]
+                        # Apply input multiplier: blend between 0 (user full control)
+                        # and aim_strength (aim assist full control)
+                        effective_str = aim_strength * aim_input_mult
+                        move_x = off_x * effective_str
+                        move_y = off_y * effective_str
                         if abs(move_x) > 0.5 or abs(move_y) > 0.5:
                             _move_mouse_relative(move_x, move_y)
 
+                    # Check if crosshair is on target or within proximity
                     in_range = x1 <= center[0] <= x2 and y1 <= center[1] <= y2
+                    in_proximity = False
+                    if proximity_enabled and not in_range:
+                        # Expand bbox by proximity_px on each side
+                        px1 = x1 - proximity_px
+                        py1 = y1 - proximity_px
+                        px2 = x2 + proximity_px
+                        py2 = y2 + proximity_px
+                        in_proximity = px1 <= center[0] <= px2 and py1 <= center[1] <= py2
 
-                    if in_range and self.triggerbot and now - self.last_click > s["cooldown"]:
+                    should_fire = in_range or in_proximity
+
+                    if should_fire and self.triggerbot and now - self.last_click > s["cooldown"]:
                         # Counter-strafe: if moving sideways, tap opposite key to stop
                         if strafe_enabled:
                             strafe_dir = _get_strafe_direction()
@@ -427,18 +471,40 @@ class Detection:
                                 strafe_delay = random.uniform(strafe_min, strafe_max)
                                 time.sleep(strafe_delay)
                                 _counter_strafe(strafe_dir)
-                                # Small wait for velocity to zero out
                                 time.sleep(0.02)
                         elif only_still and _is_moving():
-                            # Skip if "only when still" is on and we're moving
                             continue
 
                         # Random trigger delay
                         delay = random.uniform(trigger_min, trigger_max)
                         if delay > 0:
                             time.sleep(delay)
-                        _real_click()
+
+                        if fire_mode == "rapid":
+                            # Rapid mode: hold mouse down, fire in bursts
+                            if not self._mouse_held:
+                                self._burst_remaining = random.randint(burst_min, burst_max)
+                                _real_mouse_down()
+                                self._mouse_held = True
+                            # Count down burst (each frame = ~1 shot at game fire rate)
+                            self._burst_remaining -= 1
+                            if self._burst_remaining <= 0:
+                                # Release briefly between bursts
+                                _real_mouse_up()
+                                self._mouse_held = False
+                                time.sleep(random.uniform(0.04, 0.12))
+                        else:
+                            # Single mode
+                            _real_click()
                         self.last_click = now
+                    elif not should_fire and self._mouse_held:
+                        # Target lost — release mouse (rapid mode)
+                        _real_mouse_up()
+                        self._mouse_held = False
+                elif self._mouse_held:
+                    # No detection at all — release mouse
+                    _real_mouse_up()
+                    self._mouse_held = False
 
                 # Optional debug overlay window
                 if show_overlay:
@@ -450,6 +516,10 @@ class Detection:
                     if cv2.waitKey(1) == ord("l"):
                         break
 
+        # Make sure mouse is released when stopping
+        if self._mouse_held:
+            _real_mouse_up()
+            self._mouse_held = False
         if show_overlay:
             cv2.destroyAllWindows()
         self.running = False
@@ -474,8 +544,8 @@ class App(tk.Tk):
         super().__init__()
         self.title("Valorant Vision")
         self.configure(bg=self.BG)
-        self.resizable(False, False)
-        self.geometry("420x920")
+        self.resizable(False, True)
+        self.geometry("440x900")
 
         self._detection = None
         self._models = _find_models()
@@ -496,9 +566,37 @@ class App(tk.Tk):
         tk.Label(hdr, text="AI Triggerbot  •  F6 = stop from anywhere", font=("Segoe UI", 10),
                  fg=self.DIM, bg=self.BG2).pack(anchor="w")
 
-        # Body
-        body = tk.Frame(self, bg=self.BG, padx=24, pady=16)
-        body.pack(fill="both", expand=True)
+        # Scrollable body
+        container = tk.Frame(self, bg=self.BG)
+        container.pack(fill="both", expand=True)
+        canvas = tk.Canvas(container, bg=self.BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        body = tk.Frame(canvas, bg=self.BG, padx=24, pady=16)
+        body_window = canvas.create_window((0, 0), window=body, anchor="nw")
+
+        def _on_body_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        body.bind("<Configure>", _on_body_configure)
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(body_window, width=event.width)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        # Mouse wheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        def _on_mousewheel_linux(event):
+            if event.num == 4:
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                canvas.yview_scroll(1, "units")
+        self.bind_all("<MouseWheel>", _on_mousewheel)
+        self.bind_all("<Button-4>", _on_mousewheel_linux)
+        self.bind_all("<Button-5>", _on_mousewheel_linux)
 
         # Model selector
         self._add_label(body, "MODEL")
@@ -674,8 +772,17 @@ class App(tk.Tk):
 
         self._aim_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
-            aim_frame, text="Enable aim assist (move crosshair toward target)",
+            aim_frame, text="Enable aim assist",
             variable=self._aim_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        self._aim_head_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            aim_frame, text="Aim at head (even if body detected)",
+            variable=self._aim_head_var,
             bg=self.BG, fg=self.FG, selectcolor=self.BG2,
             activebackground=self.BG, activeforeground=self.FG,
             font=("Segoe UI", 10), bd=0, highlightthickness=0,
@@ -683,13 +790,78 @@ class App(tk.Tk):
 
         aim_row = tk.Frame(body, bg=self.BG)
         aim_row.pack(fill="x", pady=(0, 12))
-        aim_row.columnconfigure((0,), weight=1)
+        aim_row.columnconfigure((0, 1), weight=1)
 
         fa_str = tk.Frame(aim_row, bg=self.BG)
-        fa_str.grid(row=0, column=0, sticky="ew")
-        self._add_label(fa_str, "STRENGTH (0.1=smooth, 1.0=snap)")
+        fa_str.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._add_label(fa_str, "STRENGTH (0.1→1.0)")
         self._aim_str_var = tk.StringVar(value="0.4")
         self._make_entry(fa_str, self._aim_str_var)
+
+        fa_mult = tk.Frame(aim_row, bg=self.BG)
+        fa_mult.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self._add_label(fa_mult, "INPUT MULT (0=you, 1=bot)")
+        self._aim_mult_var = tk.StringVar(value="0.5")
+        self._make_entry(fa_mult, self._aim_mult_var)
+
+        # Fire mode section
+        self._add_label(body, "FIRE MODE")
+        fire_frame = tk.Frame(body, bg=self.BG)
+        fire_frame.pack(fill="x", pady=(0, 4))
+
+        self._fire_mode_var = tk.StringVar(value="single")
+        tk.Radiobutton(
+            fire_frame, text="Single (tap)", variable=self._fire_mode_var, value="single",
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.ACCENT2,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(side="left", padx=(0, 12))
+        tk.Radiobutton(
+            fire_frame, text="Rapid (hold & spray)", variable=self._fire_mode_var, value="rapid",
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.ACCENT2,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(side="left")
+
+        # Burst settings for rapid mode
+        burst_row = tk.Frame(body, bg=self.BG)
+        burst_row.pack(fill="x", pady=(0, 12))
+        burst_row.columnconfigure((0, 1), weight=1)
+
+        fb_min = tk.Frame(burst_row, bg=self.BG)
+        fb_min.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._add_label(fb_min, "BURST MIN (shots)")
+        self._burst_min_var = tk.StringVar(value="3")
+        self._make_entry(fb_min, self._burst_min_var)
+
+        fb_max = tk.Frame(burst_row, bg=self.BG)
+        fb_max.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self._add_label(fb_max, "BURST MAX (shots)")
+        self._burst_max_var = tk.StringVar(value="7")
+        self._make_entry(fb_max, self._burst_max_var)
+
+        # Proximity trigger
+        prox_frame = tk.Frame(body, bg=self.BG)
+        prox_frame.pack(fill="x", pady=(0, 4))
+
+        self._prox_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            prox_frame, text="Proximity fire (shoot when close, not just on target)",
+            variable=self._prox_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        prox_row = tk.Frame(body, bg=self.BG)
+        prox_row.pack(fill="x", pady=(0, 12))
+        prox_row.columnconfigure((0,), weight=1)
+
+        fp_px = tk.Frame(prox_row, bg=self.BG)
+        fp_px.grid(row=0, column=0, sticky="ew")
+        self._add_label(fp_px, "PROXIMITY DISTANCE (px)")
+        self._prox_px_var = tk.StringVar(value="30")
+        self._make_entry(fp_px, self._prox_px_var)
 
         # Start / Stop button
         self._btn = tk.Button(
@@ -778,6 +950,13 @@ class App(tk.Tk):
             "autoFire": self._autofire_var.get(),
             "aimAssist": self._aim_var.get(),
             "aimStrength": max(0.01, min(1.0, float(self._aim_str_var.get() or 0.4))),
+            "aimInputMultiplier": max(0.0, min(1.0, float(self._aim_mult_var.get() or 0.5))),
+            "aimHeadOnly": self._aim_head_var.get(),
+            "fireMode": self._fire_mode_var.get(),
+            "burstMin": int(self._burst_min_var.get() or 3),
+            "burstMax": int(self._burst_max_var.get() or 7),
+            "proximityEnabled": self._prox_var.get(),
+            "proximityPx": int(self._prox_px_var.get() or 30),
             "strafeEnabled": self._strafe_var.get(),
             "strafeMinDelay": float(self._strafe_min_var.get() or 0),
             "strafeMaxDelay": float(self._strafe_max_var.get() or 0.05),
