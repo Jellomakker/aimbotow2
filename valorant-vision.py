@@ -194,6 +194,43 @@ def _counter_strafe(direction, duration=0.03):
         pass
 
 
+def _move_mouse_relative(dx, dy):
+    """Move the mouse by (dx, dy) pixels using Win32 SendInput."""
+    if sys.platform != "win32":
+        return
+
+    MOUSEEVENTF_MOVE = 0x0001
+    INPUT_MOUSE = 0
+
+    extra = ctypes.POINTER(ctypes.c_ulong)()
+
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = [
+            ("dx", ctypes.c_long),
+            ("dy", ctypes.c_long),
+            ("mouseData", ctypes.c_ulong),
+            ("dwFlags", ctypes.c_ulong),
+            ("time", ctypes.c_ulong),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
+
+    class INPUT(ctypes.Structure):
+        class _INPUT(ctypes.Union):
+            _fields_ = [("mi", MOUSEINPUT)]
+        _fields_ = [
+            ("type", ctypes.c_ulong),
+            ("ii", _INPUT),
+        ]
+
+    inp = INPUT()
+    inp.type = INPUT_MOUSE
+    inp.ii.mi.dx = int(dx)
+    inp.ii.mi.dy = int(dy)
+    inp.ii.mi.dwFlags = MOUSEEVENTF_MOVE
+    inp.ii.mi.dwExtraInfo = extra
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+
 # ---------------------------------------------------------------------------
 # Detection engine (runs in a background thread)
 # ---------------------------------------------------------------------------
@@ -275,8 +312,10 @@ class Detection:
         model.to(device)
         self._notify(f"Running on {device.upper()} — press {s['toggleKey']} to activate")
 
-        show_overlay = s.get("showOverlay", False)
+        show_overlay = True  # always show detection window
         only_still = s.get("onlyWhenStill", True)
+        aim_assist = s.get("aimAssist", False)
+        aim_strength = s.get("aimStrength", 0.4)
         stop_key = s.get("stopKey", "F6")
         strafe_enabled = s.get("strafeEnabled", False)
         strafe_min = s.get("strafeMinDelay", 0.0)
@@ -366,6 +405,18 @@ class Detection:
                 if closest_idx != -1:
                     r = df.iloc[closest_idx]
                     x1, y1, x2, y2 = int(r.xmin), int(r.ymin), int(r.xmax), int(r.ymax)
+                    target_cx = (x1 + x2) / 2
+                    target_cy = (y1 + y2) / 2
+
+                    # Aim assist — move mouse toward target center
+                    if aim_assist:
+                        off_x = target_cx - center[0]
+                        off_y = target_cy - center[1]
+                        move_x = off_x * aim_strength
+                        move_y = off_y * aim_strength
+                        if abs(move_x) > 0.5 or abs(move_y) > 0.5:
+                            _move_mouse_relative(move_x, move_y)
+
                     in_range = x1 <= center[0] <= x2 and y1 <= center[1] <= y2
 
                     if in_range and self.triggerbot and now - self.last_click > s["cooldown"]:
@@ -424,7 +475,7 @@ class App(tk.Tk):
         self.title("Valorant Vision")
         self.configure(bg=self.BG)
         self.resizable(False, False)
-        self.geometry("420x820")
+        self.geometry("420x920")
 
         self._detection = None
         self._models = _find_models()
@@ -607,7 +658,7 @@ class App(tk.Tk):
             font=("Segoe UI", 10), bd=0, highlightthickness=0,
         ).pack(anchor="w")
 
-        self._overlay_var = tk.BooleanVar(value=False)
+        self._overlay_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
             chk_frame, text="Show debug overlay window",
             variable=self._overlay_var,
@@ -615,6 +666,30 @@ class App(tk.Tk):
             activebackground=self.BG, activeforeground=self.FG,
             font=("Segoe UI", 10), bd=0, highlightthickness=0,
         ).pack(anchor="w")
+
+        # Aim assist section
+        self._add_label(body, "AIM ASSIST")
+        aim_frame = tk.Frame(body, bg=self.BG)
+        aim_frame.pack(fill="x", pady=(0, 4))
+
+        self._aim_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            aim_frame, text="Enable aim assist (move crosshair toward target)",
+            variable=self._aim_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        aim_row = tk.Frame(body, bg=self.BG)
+        aim_row.pack(fill="x", pady=(0, 12))
+        aim_row.columnconfigure((0,), weight=1)
+
+        fa_str = tk.Frame(aim_row, bg=self.BG)
+        fa_str.grid(row=0, column=0, sticky="ew")
+        self._add_label(fa_str, "STRENGTH (0.1=smooth, 1.0=snap)")
+        self._aim_str_var = tk.StringVar(value="0.4")
+        self._make_entry(fa_str, self._aim_str_var)
 
         # Start / Stop button
         self._btn = tk.Button(
@@ -701,6 +776,8 @@ class App(tk.Tk):
             "onlyWhenStill": self._still_var.get(),
             "showOverlay": self._overlay_var.get(),
             "autoFire": self._autofire_var.get(),
+            "aimAssist": self._aim_var.get(),
+            "aimStrength": max(0.01, min(1.0, float(self._aim_str_var.get() or 0.4))),
             "strafeEnabled": self._strafe_var.get(),
             "strafeMinDelay": float(self._strafe_min_var.get() or 0),
             "strafeMaxDelay": float(self._strafe_max_var.get() or 0.05),
