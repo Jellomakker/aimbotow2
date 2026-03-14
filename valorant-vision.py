@@ -3,10 +3,13 @@ Valorant AI Triggerbot — Single-file script
 Run this file → GUI opens → pick settings → press START
 
 Requirements (install once):
-    pip install ultralytics torch mss opencv-python numpy pandas pyautogui keyboard
+    pip install ultralytics torch mss opencv-python numpy pandas keyboard
 
 Place your YOLO .pt model files in the same folder as this script,
 or they will be looked for in a "models/" subfolder next to the script.
+
+NOTE: The included v1/v2.pt models are trained for Overwatch 2.
+      For Valorant you need a Valorant-trained YOLO model.
 """
 
 import os
@@ -14,6 +17,8 @@ import sys
 import math
 import time
 import threading
+import ctypes
+import struct
 import tkinter as tk
 from tkinter import ttk
 
@@ -46,6 +51,74 @@ def _resolve_model(name):
 
 
 # ---------------------------------------------------------------------------
+# Real mouse click via Windows SendInput (works in games)
+# ---------------------------------------------------------------------------
+def _real_click():
+    """Send a hardware-level left mouse click using Win32 SendInput."""
+    if sys.platform != "win32":
+        # Fallback for non-Windows (won't work in games but won't crash)
+        try:
+            import pyautogui
+            pyautogui.click()
+        except Exception:
+            pass
+        return
+
+    MOUSEEVENTF_LEFTDOWN = 0x0002
+    MOUSEEVENTF_LEFTUP = 0x0004
+    INPUT_MOUSE = 0
+
+    # MOUSEINPUT struct: dx, dy, mouseData, dwFlags, time, dwExtraInfo
+    # INPUT struct: type, union(MOUSEINPUT)
+    # On 64-bit Windows, INPUT is 40 bytes
+    extra = ctypes.POINTER(ctypes.c_ulong)()
+
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = [
+            ("dx", ctypes.c_long),
+            ("dy", ctypes.c_long),
+            ("mouseData", ctypes.c_ulong),
+            ("dwFlags", ctypes.c_ulong),
+            ("time", ctypes.c_ulong),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
+
+    class INPUT(ctypes.Structure):
+        class _INPUT(ctypes.Union):
+            _fields_ = [("mi", MOUSEINPUT)]
+        _fields_ = [
+            ("type", ctypes.c_ulong),
+            ("ii", _INPUT),
+        ]
+
+    def _send(flags):
+        inp = INPUT()
+        inp.type = INPUT_MOUSE
+        inp.ii.mi.dwFlags = flags
+        inp.ii.mi.dwExtraInfo = extra
+        ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+    _send(MOUSEEVENTF_LEFTDOWN)
+    time.sleep(0.02)
+    _send(MOUSEEVENTF_LEFTUP)
+
+
+# ---------------------------------------------------------------------------
+# Check if player is moving (WASD held)
+# ---------------------------------------------------------------------------
+def _is_moving():
+    """Return True if any movement key is pressed."""
+    try:
+        import keyboard
+        for key in ("w", "a", "s", "d"):
+            if keyboard.is_pressed(key):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Detection engine (runs in a background thread)
 # ---------------------------------------------------------------------------
 class Detection:
@@ -55,6 +128,7 @@ class Detection:
         self.running = False
         self.triggerbot = False
         self.last_click = 0
+        self._toggle_cooldown = 0
         self._thread = None
 
     def start(self):
@@ -83,7 +157,6 @@ class Detection:
             import numpy as np
             import pandas as pd
             from ultralytics import YOLO
-            import pyautogui
             import keyboard
         except ImportError as e:
             self._notify(f"Missing package: {e.name}  —  pip install {e.name}")
@@ -112,10 +185,22 @@ class Detection:
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model.to(device)
-        self._notify(f"Running on {device.upper()}")
+        self._notify(f"Running on {device.upper()} — press {s['toggleKey']} to activate")
+
+        show_overlay = s.get("showOverlay", False)
+        only_still = s.get("onlyWhenStill", True)
+        stop_key = s.get("stopKey", "F6")
 
         with mss() as stc:
             while self.running:
+                # Global stop hotkey (F6 by default)
+                try:
+                    if keyboard.is_pressed(stop_key):
+                        self._notify("Stopped (hotkey)")
+                        break
+                except Exception:
+                    pass
+
                 closest_dist = 1e9
                 closest_idx = -1
                 now = time.time()
@@ -151,15 +236,16 @@ class Detection:
                         if d < closest_dist:
                             closest_dist = d
                             closest_idx = i
-                        cv2.rectangle(shot, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        if show_overlay:
+                            cv2.rectangle(shot, (x1, y1), (x2, y2), (255, 0, 0), 2)
                     except Exception:
                         pass
 
-                # Toggle hotkey
+                # Toggle triggerbot hotkey
                 try:
-                    if keyboard.is_pressed(s["toggleKey"]) and now - self.last_click > 0.2:
+                    if keyboard.is_pressed(s["toggleKey"]) and now - self._toggle_cooldown > 0.3:
                         self.triggerbot = not self.triggerbot
-                        self.last_click = now
+                        self._toggle_cooldown = now
                         self._notify("Triggerbot ON" if self.triggerbot else "Triggerbot OFF")
                 except Exception:
                     pass
@@ -168,20 +254,31 @@ class Detection:
                     r = df.iloc[closest_idx]
                     x1, y1, x2, y2 = int(r.xmin), int(r.ymin), int(r.xmax), int(r.ymax)
                     in_range = x1 <= center[0] <= x2 and y1 <= center[1] <= y2
-                    if in_range and self.triggerbot and now - self.last_click > s["cooldown"]:
+
+                    can_click = (
+                        in_range
+                        and self.triggerbot
+                        and now - self.last_click > s["cooldown"]
+                        and (not only_still or not _is_moving())
+                    )
+
+                    if can_click:
                         time.sleep(s["triggerDelay"])
-                        pyautogui.click()
+                        _real_click()
                         self.last_click = now
 
-                # Overlay
-                color = (0, 255, 0) if self.triggerbot else (0, 0, 255)
-                cv2.rectangle(shot, (0, 0), (20, 20), color, -1)
-                cv2.putText(shot, "valorant-vision", (25, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
-                cv2.imshow("valorant-vision", shot)
-                if cv2.waitKey(1) == ord("l"):
-                    break
+                # Optional debug overlay window
+                if show_overlay:
+                    color = (0, 255, 0) if self.triggerbot else (0, 0, 255)
+                    cv2.rectangle(shot, (0, 0), (20, 20), color, -1)
+                    cv2.putText(shot, "valorant-vision", (25, 18),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+                    cv2.imshow("valorant-vision", shot)
+                    if cv2.waitKey(1) == ord("l"):
+                        break
 
-        cv2.destroyAllWindows()
+        if show_overlay:
+            cv2.destroyAllWindows()
         self.running = False
         self._notify("Stopped")
 
@@ -205,13 +302,16 @@ class App(tk.Tk):
         self.title("Valorant Vision")
         self.configure(bg=self.BG)
         self.resizable(False, False)
-        self.geometry("420x520")
+        self.geometry("420x620")
 
         self._detection = None
         self._models = _find_models()
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Global stop hotkey listener
+        self._poll_stop()
 
     # ── build ──
     def _build_ui(self):
@@ -220,7 +320,7 @@ class App(tk.Tk):
         hdr.pack(fill="x")
         tk.Label(hdr, text="VALORANT VISION", font=("Segoe UI", 20, "bold"),
                  fg=self.ACCENT2, bg=self.BG2).pack(anchor="w")
-        tk.Label(hdr, text="AI Triggerbot", font=("Segoe UI", 10),
+        tk.Label(hdr, text="AI Triggerbot  •  F6 = stop from anywhere", font=("Segoe UI", 10),
                  fg=self.DIM, bg=self.BG2).pack(anchor="w")
 
         # Body
@@ -283,7 +383,7 @@ class App(tk.Tk):
 
         # Resolution row
         row2 = tk.Frame(body, bg=self.BG)
-        row2.pack(fill="x", pady=(0, 14))
+        row2.pack(fill="x", pady=(0, 12))
         row2.columnconfigure((0, 1, 2), weight=1)
 
         fw = tk.Frame(row2, bg=self.BG)
@@ -304,6 +404,28 @@ class App(tk.Tk):
         self._sc_var = tk.StringVar(value="5")
         self._make_entry(fs, self._sc_var)
 
+        # Checkboxes row
+        chk_frame = tk.Frame(body, bg=self.BG)
+        chk_frame.pack(fill="x", pady=(0, 12))
+
+        self._still_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            chk_frame, text="Only click when standing still",
+            variable=self._still_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        self._overlay_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            chk_frame, text="Show debug overlay window",
+            variable=self._overlay_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
         # Start / Stop button
         self._btn = tk.Button(
             body, text="START", font=("Segoe UI", 13, "bold"),
@@ -316,8 +438,8 @@ class App(tk.Tk):
 
         # Status
         self._status_lbl = tk.Label(
-            body, text="Ready", font=("Segoe UI", 10),
-            fg=self.DIM, bg=self.BG,
+            body, text="Ready  —  press START then toggle key (`) in-game",
+            font=("Segoe UI", 10), fg=self.DIM, bg=self.BG, wraplength=380,
         )
         self._status_lbl.pack(pady=(10, 0))
 
@@ -357,6 +479,9 @@ class App(tk.Tk):
             "monitorWidth": int(self._w_var.get() or 1920),
             "monitorHeight": int(self._h_var.get() or 1080),
             "monitorScale": int(self._sc_var.get() or 5),
+            "onlyWhenStill": self._still_var.get(),
+            "showOverlay": self._overlay_var.get(),
+            "stopKey": "F6",
         }
 
         self._detection = Detection(settings, status_cb=self._set_status_threadsafe)
@@ -377,6 +502,13 @@ class App(tk.Tk):
 
     def _set_status_threadsafe(self, txt):
         self.after(0, self._set_status, txt)
+
+    def _poll_stop(self):
+        """Check if detection stopped itself (e.g. via F6 hotkey) and update GUI."""
+        if self._detection and not self._detection.running:
+            self._detection = None
+            self._btn.configure(text="START", bg=self.ACCENT)
+        self.after(500, self._poll_stop)
 
     def _on_close(self):
         if self._detection:
