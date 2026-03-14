@@ -400,10 +400,10 @@ class Detection:
                     target_cx = (x1 + x2) / 2
                     target_cy = (y1 + y2) / 2
 
-                    # Aim assist — ALWAYS aims at head (top of bounding box)
+                    # Aim assist — aims at upper 5th center of bounding box
                     if aim_assist:
                         aim_x = target_cx
-                        aim_y = y1 + (y2 - y1) * 0.15  # top 15% = head area
+                        aim_y = y1 + (y2 - y1) * 0.10  # upper 5th middle
 
                         off_x = aim_x - center[0]
                         off_y = aim_y - center[1]
