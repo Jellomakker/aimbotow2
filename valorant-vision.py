@@ -341,6 +341,8 @@ class Detection:
                     save=False,
                     classes=s["detect"],
                     conf=s["confidence"],
+                    iou=0.45,
+                    imgsz=640,
                     verbose=False,
                     device=device,
                     half=False,
@@ -358,6 +360,11 @@ class Detection:
                 for i, (_, row) in enumerate(df.iterrows()):
                     try:
                         x1, y1, x2, y2 = int(row.xmin), int(row.ymin), int(row.xmax), int(row.ymax)
+                        bw = x2 - x1
+                        bh = y2 - y1
+                        # Filter out tiny detections (noise) and huge ones (background)
+                        if bw < 10 or bh < 15 or bw > w * 0.6 or bh > h * 0.8:
+                            continue
                         cx = (x2 - x1) / 2 + x1
                         cy = (y2 - y1) / 2 + y1
                         d = math.dist([cx, cy], center)
@@ -365,7 +372,10 @@ class Detection:
                             closest_dist = d
                             closest_idx = i
                         if show_overlay:
+                            conf_pct = int(row.conf * 100)
                             cv2.rectangle(shot, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                            cv2.putText(shot, f"{conf_pct}%", (x1, y1 - 5),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
                     except Exception:
                         pass
 
@@ -617,7 +627,7 @@ class App(tk.Tk):
         f3 = tk.Frame(row, bg=self.BG)
         f3.grid(row=0, column=2, sticky="ew", padx=(6, 0))
         self._add_label(f3, "CONFIDENCE")
-        self._conf_var = tk.StringVar(value="0.35")
+        self._conf_var = tk.StringVar(value="0.45")
         self._make_entry(f3, self._conf_var)
 
         # Trigger delay row (min / max)
@@ -641,7 +651,7 @@ class App(tk.Tk):
         fd_sc = tk.Frame(row_delay, bg=self.BG)
         fd_sc.grid(row=0, column=2, sticky="ew", padx=(6, 0))
         self._add_label(fd_sc, "SCALE")
-        self._sc_var = tk.StringVar(value="5")
+        self._sc_var = tk.StringVar(value="3")
         self._make_entry(fd_sc, self._sc_var)
 
         # Resolution row
