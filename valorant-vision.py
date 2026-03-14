@@ -230,7 +230,7 @@ class Detection:
         self._toggle_cooldown = 0
         self._thread = None
         self._mouse_held = False  # track if we're holding left click (rapid mode)
-        self._burst_remaining = 0  # shots left in current burst
+        self._last_target_time = 0  # last time we saw a valid target (for grace period)
 
     def start(self):
         if self.running:
@@ -316,6 +316,7 @@ class Detection:
 
         frame_count = 0
         last_status_time = 0
+        hold_grace = 0.2  # seconds to keep holding after losing target (prevents flicker)
 
         with mss() as stc:
             while self.running:
@@ -406,19 +407,18 @@ class Detection:
 
                         off_x = aim_x - center[0]
                         off_y = aim_y - center[1]
-                        # Apply input multiplier: blend between 0 (user full control)
-                        # and aim_strength (aim assist full control)
                         effective_str = aim_strength * aim_input_mult
                         move_x = off_x * effective_str
                         move_y = off_y * effective_str
                         if abs(move_x) > 0.5 or abs(move_y) > 0.5:
                             _move_mouse_relative(move_x, move_y)
 
-                    # Check if crosshair is on target or within proximity
-                    in_range = x1 <= center[0] <= x2 and y1 <= center[1] <= y2
+                    # Check if crosshair is on or near target
+                    # Pad bbox by 10px so small head boxes aren't impossible to hit
+                    pad = 10
+                    in_range = (x1 - pad) <= center[0] <= (x2 + pad) and (y1 - pad) <= center[1] <= (y2 + pad)
                     in_proximity = False
                     if proximity_enabled and not in_range:
-                        # Expand bbox by proximity_px on each side
                         px1 = x1 - proximity_px
                         py1 = y1 - proximity_px
                         px2 = x2 + proximity_px
@@ -427,32 +427,41 @@ class Detection:
 
                     should_fire = in_range or in_proximity
 
-                    if should_fire and self.triggerbot and now - self.last_click > s["cooldown"]:
+                    if should_fire and self.triggerbot:
+                        self._last_target_time = now
+
                         if only_still and _is_moving():
                             continue
 
-                        # Random trigger delay
-                        delay = random.uniform(trigger_min, trigger_max)
-                        if delay > 0:
-                            time.sleep(delay)
-
                         if fire_mode == "rapid":
-                            # Rapid mode: hold mouse down while on target
+                            # Rapid: hold mouse down the entire time
                             if not self._mouse_held:
+                                delay = random.uniform(trigger_min, trigger_max)
+                                if delay > 0:
+                                    time.sleep(delay)
                                 _real_mouse_down()
                                 self._mouse_held = True
+                            # No cooldown — just keep holding
                         else:
-                            # Single mode
-                            _real_click()
-                        self.last_click = now
+                            # Single: tap once per cooldown
+                            if now - self.last_click > s["cooldown"]:
+                                delay = random.uniform(trigger_min, trigger_max)
+                                if delay > 0:
+                                    time.sleep(delay)
+                                _real_click()
+                                self.last_click = now
+
                     elif not should_fire and self._mouse_held:
-                        # Target lost — release mouse (rapid mode)
+                        # Off target but still have detection — use grace period
+                        if now - self._last_target_time > hold_grace:
+                            _real_mouse_up()
+                            self._mouse_held = False
+
+                elif self._mouse_held:
+                    # No detection at all — grace period before releasing
+                    if now - self._last_target_time > hold_grace:
                         _real_mouse_up()
                         self._mouse_held = False
-                elif self._mouse_held:
-                    # No detection at all — release mouse
-                    _real_mouse_up()
-                    self._mouse_held = False
 
                 # Optional debug overlay window
                 if show_overlay:
