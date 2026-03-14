@@ -180,31 +180,6 @@ def _is_moving():
     return False
 
 
-def _get_strafe_direction():
-    """Return which horizontal key is held, or None."""
-    try:
-        import keyboard
-        if keyboard.is_pressed("a"):
-            return "a"
-        if keyboard.is_pressed("d"):
-            return "d"
-    except Exception:
-        pass
-    return None
-
-
-def _counter_strafe(direction, duration=0.03):
-    """Tap the opposite key to stop movement instantly."""
-    try:
-        import keyboard
-        opposite = "d" if direction == "a" else "a"
-        keyboard.press(opposite)
-        time.sleep(duration)
-        keyboard.release(opposite)
-    except Exception:
-        pass
-
-
 def _move_mouse_relative(dx, dy):
     """Move the mouse by (dx, dy) pixels using Win32 SendInput."""
     if sys.platform != "win32":
@@ -326,14 +301,11 @@ class Detection:
         self._notify(f"Running on {device.upper()} — press {s['toggleKey']} to activate")
 
         show_overlay = True  # always show detection window
-        only_still = s.get("onlyWhenStill", True)
+        only_still = s.get("onlyWhenStill", False)
         aim_assist = s.get("aimAssist", False)
         aim_strength = s.get("aimStrength", 0.4)
         aim_input_mult = s.get("aimInputMultiplier", 0.5)
         stop_key = s.get("stopKey", "F6")
-        strafe_enabled = s.get("strafeEnabled", False)
-        strafe_min = s.get("strafeMinDelay", 0.0)
-        strafe_max = s.get("strafeMaxDelay", 0.05)
         trigger_min = s.get("triggerMinDelay", 0.0)
         trigger_max = s.get("triggerMaxDelay", 0.0)
         fire_mode = s.get("fireMode", "single")  # "single" or "rapid"
@@ -456,15 +428,7 @@ class Detection:
                     should_fire = in_range or in_proximity
 
                     if should_fire and self.triggerbot and now - self.last_click > s["cooldown"]:
-                        # Counter-strafe: if moving sideways, tap opposite key to stop
-                        if strafe_enabled:
-                            strafe_dir = _get_strafe_direction()
-                            if strafe_dir:
-                                strafe_delay = random.uniform(strafe_min, strafe_max)
-                                time.sleep(strafe_delay)
-                                _counter_strafe(strafe_dir)
-                                time.sleep(0.02)
-                        elif only_still and _is_moving():
+                        if only_still and _is_moving():
                             continue
 
                         # Random trigger delay
@@ -678,36 +642,6 @@ class App(tk.Tk):
         self._add_label(fd_sc, "SCALE")
         self._sc_var = tk.StringVar(value="5")
         self._make_entry(fd_sc, self._sc_var)
-
-        # Counter-strafe section
-        self._add_label(body, "COUNTER-STRAFE")
-        strafe_frame = tk.Frame(body, bg=self.BG)
-        strafe_frame.pack(fill="x", pady=(0, 4))
-
-        self._strafe_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(
-            strafe_frame, text="Auto counter-strafe before shooting",
-            variable=self._strafe_var,
-            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
-            activebackground=self.BG, activeforeground=self.FG,
-            font=("Segoe UI", 10), bd=0, highlightthickness=0,
-        ).pack(anchor="w")
-
-        row_strafe = tk.Frame(body, bg=self.BG)
-        row_strafe.pack(fill="x", pady=(0, 12))
-        row_strafe.columnconfigure((0, 1), weight=1)
-
-        fs_min = tk.Frame(row_strafe, bg=self.BG)
-        fs_min.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        self._add_label(fs_min, "STRAFE MIN DELAY (s)")
-        self._strafe_min_var = tk.StringVar(value="0.0")
-        self._make_entry(fs_min, self._strafe_min_var)
-
-        fs_max = tk.Frame(row_strafe, bg=self.BG)
-        fs_max.grid(row=0, column=1, sticky="ew", padx=(6, 0))
-        self._add_label(fs_max, "STRAFE MAX DELAY (s)")
-        self._strafe_max_var = tk.StringVar(value="0.05")
-        self._make_entry(fs_max, self._strafe_max_var)
 
         # Resolution row
         row2 = tk.Frame(body, bg=self.BG)
@@ -939,9 +873,6 @@ class App(tk.Tk):
             "burstMax": int(self._burst_max_var.get() or 7),
             "proximityEnabled": self._prox_var.get(),
             "proximityPx": int(self._prox_px_var.get() or 30),
-            "strafeEnabled": self._strafe_var.get(),
-            "strafeMinDelay": float(self._strafe_min_var.get() or 0),
-            "strafeMaxDelay": float(self._strafe_max_var.get() or 0.05),
             "stopKey": "F6",
         }
 
