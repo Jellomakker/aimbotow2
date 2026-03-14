@@ -28,6 +28,35 @@ from tkinter import ttk, filedialog, messagebox
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _MODELS_DIR = os.path.join(_SCRIPT_DIR, "models")
 
+_MODEL_URLS = {
+    "v2.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v2.pt",
+    "v1.1.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v1.1.pt",
+    "v1.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v1.pt",
+}
+
+
+def _download_model(name, status_cb=None):
+    """Download a model from GitHub if available."""
+    url = _MODEL_URLS.get(name)
+    if not url:
+        return None
+    os.makedirs(_MODELS_DIR, exist_ok=True)
+    dest = os.path.join(_MODELS_DIR, name)
+    if os.path.isfile(dest):
+        return dest
+    if status_cb:
+        status_cb(f"Downloading {name}…")
+    try:
+        import urllib.request
+        urllib.request.urlretrieve(url, dest)
+        if status_cb:
+            status_cb(f"Downloaded {name}")
+        return dest
+    except Exception as e:
+        if status_cb:
+            status_cb(f"Download failed: {e}")
+        return None
+
 
 def _model_search_dirs():
     """All directories where .pt models might live."""
@@ -47,14 +76,17 @@ def _model_search_dirs():
 
 
 def _find_models():
-    """Return list of .pt files available."""
+    """Return list of .pt files available (local + downloadable)."""
     found = set()
     for d in _model_search_dirs():
         if os.path.isdir(d):
             for f in os.listdir(d):
                 if f.endswith(".pt"):
                     found.add(f)
-    return sorted(found) if found else []
+    # Always show downloadable models as options
+    for name in _MODEL_URLS:
+        found.add(name)
+    return sorted(found) if found else ["v2.pt"]
 
 
 def _resolve_model(name):
@@ -220,9 +252,17 @@ class Detection:
 
         model_path = _resolve_model(s["model"])
         if not os.path.isfile(model_path):
-            self._notify(f"Model not found: {s['model']} — use Browse to pick your .pt file")
-            self.running = False
-            return
+            # Try to auto-download
+            downloaded = _download_model(
+                os.path.basename(s["model"]),
+                status_cb=self._notify,
+            )
+            if downloaded and os.path.isfile(downloaded):
+                model_path = downloaded
+            else:
+                self._notify(f"Model not found: {s['model']} — use Browse to pick your .pt file")
+                self.running = False
+                return
         self._notify(f"Loading model {os.path.basename(model_path)}\u2026")
         try:
             model = YOLO(model_path)
