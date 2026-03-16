@@ -29,6 +29,7 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _MODELS_DIR = os.path.join(_SCRIPT_DIR, "models")
 
 _MODEL_URLS = {
+    "v3-roboflow.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v3-roboflow.pt",
     "v2.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v2.pt",
     "v1.1.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v1.1.pt",
     "v1.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v1.pt",
@@ -615,7 +616,9 @@ class App(tk.Tk):
 
         # Model selector
         self._add_label(body, "MODEL")
-        self._model_var = tk.StringVar(value=self._models[-1] if self._models else "")
+        # Default to v3-roboflow if available
+        _default_model = "v3-roboflow.pt" if "v3-roboflow.pt" in self._models else (self._models[-1] if self._models else "")
+        self._model_var = tk.StringVar(value=_default_model)
         mf = tk.Frame(body, bg=self.BG)
         mf.pack(fill="x", pady=(0, 12))
         for m in self._models:
@@ -907,11 +910,17 @@ class App(tk.Tk):
 
     def _start(self):
         # Build detect list from checkboxes
-        detect = []
-        if self._head_var.get():
-            detect.append(1)
-        if self._body_var.get():
-            detect.append(0)
+        model_name = self._model_var.get().split("/")[-1].split("\\")[-1]
+        if model_name == "v3-roboflow.pt":
+            # v3 model: single class 0 = player (body+head combined)
+            detect = [0]
+        else:
+            # v1/v2 models: 0=enemy body, 1=enemy head
+            detect = []
+            if self._head_var.get():
+                detect.append(1)
+            if self._body_var.get():
+                detect.append(0)
         if not detect:
             messagebox.showwarning("No target", "Turn on at least Head or Body.")
             return
