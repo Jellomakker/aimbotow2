@@ -166,6 +166,14 @@ def _real_mouse_up():
     _send_mouse_event(_MOUSEEVENTF_LEFTUP)
 
 
+def _is_left_held():
+    """Check if the user is physically holding the left mouse button."""
+    if sys.platform != "win32":
+        return False
+    state = ctypes.windll.user32.GetAsyncKeyState(0x01)
+    return bool(state & 0x8000)
+
+
 # ---------------------------------------------------------------------------
 # Check if player is moving (WASD held)
 # ---------------------------------------------------------------------------
@@ -511,13 +519,13 @@ class Detection:
 
                     elif not should_fire and self._mouse_held:
                         # Off target but still have detection — use grace period
-                        if now - self._last_target_time > hold_grace:
+                        if now - self._last_target_time > hold_grace and not _is_left_held():
                             _real_mouse_up()
                             self._mouse_held = False
 
                 elif self._mouse_held:
                     # No detection at all — grace period before releasing
-                    if now - self._last_target_time > hold_grace:
+                    if now - self._last_target_time > hold_grace and not _is_left_held():
                         _real_mouse_up()
                         self._mouse_held = False
 
