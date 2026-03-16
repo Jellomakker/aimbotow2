@@ -472,7 +472,8 @@ class Detection:
 
                     # Check if crosshair is on or near target (full body box)
                     pad = 10
-                    in_range = (x1 - pad) <= center[0] <= (x2 + pad) and (y1 - pad) <= center[1] <= (y2 + pad)
+                    head_bottom = y1 + (y2 - y1) * max(0.35, aim_head_pos * 2)
+                    in_range = (x1 - pad) <= center[0] <= (x2 + pad) and (y1 - pad) <= center[1] <= (head_bottom + pad)
                     in_proximity = False
                     if proximity_enabled and not in_range:
                         px1 = x1 - proximity_px
