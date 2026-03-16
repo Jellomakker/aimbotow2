@@ -885,7 +885,7 @@ class App(tk.Tk):
             "triggerMaxDelay": float(self._delay_max_var.get() or 0),
             "monitorWidth": int(self._w_var.get() or 1920),
             "monitorHeight": int(self._h_var.get() or 1080),
-            "monitorScale": int(self._sc_var.get() or 5),
+            "monitorScale": float(self._sc_var.get() or 5),
             "onlyWhenStill": self._still_var.get(),
             "showOverlay": self._overlay_var.get(),
             "autoFire": self._autofire_var.get(),
