@@ -306,6 +306,7 @@ class Detection:
         aim_assist = s.get("aimAssist", False)
         aim_strength = s.get("aimStrength", 0.4)
         aim_input_mult = s.get("aimInputMultiplier", 0.5)
+        aim_head_pos = s.get("aimHeadPos", 0.10)
         stop_key = s.get("stopKey", "F6")
         trigger_min = s.get("triggerMinDelay", 0.0)
         trigger_max = s.get("triggerMaxDelay", 0.0)
@@ -415,7 +416,7 @@ class Detection:
                     # Aim assist — aims at upper 5th center of body bbox (head area)
                     if aim_assist:
                         aim_x = target_cx
-                        aim_y = y1 + (y2 - y1) * 0.10  # upper 5th middle of body box
+                        aim_y = y1 + (y2 - y1) * aim_head_pos  # configurable head position
 
                         off_x = aim_x - center[0]
                         off_y = aim_y - center[1]
@@ -720,7 +721,7 @@ class App(tk.Tk):
 
         aim_row = tk.Frame(body, bg=self.BG)
         aim_row.pack(fill="x", pady=(0, 12))
-        aim_row.columnconfigure((0, 1), weight=1)
+        aim_row.columnconfigure((0, 1, 2), weight=1)
 
         fa_str = tk.Frame(aim_row, bg=self.BG)
         fa_str.grid(row=0, column=0, sticky="ew", padx=(0, 6))
@@ -729,10 +730,16 @@ class App(tk.Tk):
         self._make_entry(fa_str, self._aim_str_var)
 
         fa_mult = tk.Frame(aim_row, bg=self.BG)
-        fa_mult.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        fa_mult.grid(row=0, column=1, sticky="ew", padx=3)
         self._add_label(fa_mult, "INPUT MULT (0=you, 1=bot)")
         self._aim_mult_var = tk.StringVar(value="0.5")
         self._make_entry(fa_mult, self._aim_mult_var)
+
+        fa_head = tk.Frame(aim_row, bg=self.BG)
+        fa_head.grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        self._add_label(fa_head, "HEAD POS (0=top, 1=bot)")
+        self._aim_head_var = tk.StringVar(value="0.10")
+        self._make_entry(fa_head, self._aim_head_var)
 
         # Fire mode section
         self._add_label(body, "FIRE MODE")
@@ -892,6 +899,7 @@ class App(tk.Tk):
             "aimAssist": self._aim_var.get(),
             "aimStrength": max(0.01, min(1.0, float(self._aim_str_var.get() or 0.4))),
             "aimInputMultiplier": max(0.0, min(1.0, float(self._aim_mult_var.get() or 0.5))),
+            "aimHeadPos": max(0.0, min(1.0, float(self._aim_head_var.get() or 0.10))),
             "fireMode": self._fire_mode_var.get(),
             "burstMin": int(self._burst_min_var.get() or 3),
             "burstMax": int(self._burst_max_var.get() or 7),
