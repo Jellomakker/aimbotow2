@@ -332,6 +332,9 @@ class Detection:
         stop_key = s.get("stopKey", "F6")
         trigger_min = s.get("triggerMinDelay", 0.0)
         trigger_max = s.get("triggerMaxDelay", 0.0)
+        recoil_enabled = s.get("recoilEnabled", False)
+        recoil_min = s.get("recoilMin", 0.5)
+        recoil_max = s.get("recoilMax", 2.0)
         fire_mode = s.get("fireMode", "single")  # "single" or "rapid"
         burst_min = int(s.get("burstMin", 3))
         burst_max = int(s.get("burstMax", 7))
@@ -567,7 +570,10 @@ class Detection:
                                     time.sleep(delay)
                                 _real_mouse_down()
                                 self._mouse_held = True
-                            # No cooldown — just keep holding
+                            # Apply horizontal recoil control while holding
+                            if recoil_enabled and self._mouse_held:
+                                h_recoil = random.uniform(recoil_min, recoil_max) * random.choice([-1, 1])
+                                _move_mouse_relative(h_recoil, 0)
                         else:
                             # Single: tap once per cooldown
                             if now - self.last_click > s["cooldown"]:
@@ -576,6 +582,9 @@ class Detection:
                                     time.sleep(delay)
                                 _real_click()
                                 self.last_click = now
+                                if recoil_enabled:
+                                    h_recoil = random.uniform(recoil_min, recoil_max) * random.choice([-1, 1])
+                                    _move_mouse_relative(h_recoil, 0)
 
                     elif not should_fire and self._mouse_held:
                         # Off target but still have detection — use grace period
@@ -873,6 +882,35 @@ class App(tk.Tk):
         self._aim_dz_var = tk.StringVar(value="5")
         self._make_entry(fa_dz, self._aim_dz_var)
 
+        # Horizontal recoil control
+        recoil_frame = tk.Frame(body, bg=self.BG)
+        recoil_frame.pack(fill="x", pady=(0, 4))
+
+        self._recoil_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            recoil_frame, text="Horizontal recoil control (counter spray drift)",
+            variable=self._recoil_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        recoil_row = tk.Frame(body, bg=self.BG)
+        recoil_row.pack(fill="x", pady=(0, 12))
+        recoil_row.columnconfigure((0, 1), weight=1)
+
+        fr_min = tk.Frame(recoil_row, bg=self.BG)
+        fr_min.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._add_label(fr_min, "H-RECOIL MIN (px per frame)")
+        self._recoil_min_var = tk.StringVar(value="0.5")
+        self._make_entry(fr_min, self._recoil_min_var)
+
+        fr_max = tk.Frame(recoil_row, bg=self.BG)
+        fr_max.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self._add_label(fr_max, "H-RECOIL MAX (px per frame)")
+        self._recoil_max_var = tk.StringVar(value="2.0")
+        self._make_entry(fr_max, self._recoil_max_var)
+
         # Fire mode section
         self._add_label(body, "FIRE MODE")
         fire_frame = tk.Frame(body, bg=self.BG)
@@ -1091,6 +1129,9 @@ class App(tk.Tk):
             "aimDeadzone": max(0.0, self._sf(self._aim_dz_var.get(), 5)),
             "depthEnabled": self._depth_var.get(),
             "depthInterval": self._si(self._depth_int_var.get(), 3),
+            "recoilEnabled": self._recoil_var.get(),
+            "recoilMin": self._sf(self._recoil_min_var.get(), 0.5),
+            "recoilMax": self._sf(self._recoil_max_var.get(), 2.0),
             "fireMode": self._fire_mode_var.get(),
             "burstMin": self._si(self._burst_min_var.get(), 3),
             "burstMax": self._si(self._burst_max_var.get(), 7),
