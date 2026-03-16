@@ -415,7 +415,7 @@ class Detection:
                     # Aim assist — aims at upper 5th center of body bbox (head area)
                     if aim_assist:
                         aim_x = target_cx
-                        aim_y = y1  # very top edge of body box
+                        aim_y = y1 + (y2 - y1) * 0.10  # upper 5th middle of body box
 
                         off_x = aim_x - center[0]
                         off_y = aim_y - center[1]
@@ -425,11 +425,9 @@ class Detection:
                         if abs(move_x) > 0.5 or abs(move_y) > 0.5:
                             _move_mouse_relative(move_x, move_y)
 
-                    # Check if crosshair is on or near target HEAD region
-                    # Only fire when crosshair is in the top 30% of bounding box (head area)
+                    # Check if crosshair is on or near target (full body box)
                     pad = 10
-                    head_y_bottom = y1 + (y2 - y1) * 0.30
-                    in_range = (x1 - pad) <= center[0] <= (x2 + pad) and (y1 - pad) <= center[1] <= (head_y_bottom + pad)
+                    in_range = (x1 - pad) <= center[0] <= (x2 + pad) and (y1 - pad) <= center[1] <= (y2 + pad)
                     in_proximity = False
                     if proximity_enabled and not in_range:
                         px1 = x1 - proximity_px
