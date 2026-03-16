@@ -303,16 +303,6 @@ class Detection:
         model.to(device)
         self._notify(f"Running on {device.upper()} — press {s['toggleKey']} to activate")
 
-        # Hitbox threshold
-        hb_row = tk.Frame(body, bg=self.BG)
-        hb_row.pack(fill="x", pady=(0, 12))
-        hb_row.columnconfigure((0,), weight=1)
-        fhb = tk.Frame(hb_row, bg=self.BG)
-        fhb.grid(row=0, column=0, sticky="ew")
-        self._add_label(fhb, "HITBOX % (100=full box, 50=center half, lower=stricter)")
-        self._hitbox_var = tk.StringVar(value="100")
-        self._make_entry(fhb, self._hitbox_var)
-
         # Depth estimation model (optional)
         depth_pipe = None
         use_depth = s.get("depthEnabled", False)
@@ -912,6 +902,16 @@ class App(tk.Tk):
         self._add_label(fp_px, "PROXIMITY DISTANCE (px)")
         self._prox_px_var = tk.StringVar(value="30")
         self._make_entry(fp_px, self._prox_px_var)
+
+        # Hitbox threshold
+        hb_row = tk.Frame(body, bg=self.BG)
+        hb_row.pack(fill="x", pady=(0, 12))
+        hb_row.columnconfigure((0,), weight=1)
+        fhb = tk.Frame(hb_row, bg=self.BG)
+        fhb.grid(row=0, column=0, sticky="ew")
+        self._add_label(fhb, "HITBOX % (100=edge, 50=halfway in, 1=dead center)")
+        self._hitbox_var = tk.StringVar(value="100")
+        self._make_entry(fhb, self._hitbox_var)
 
         # Depth estimation
         depth_frame = tk.Frame(body, bg=self.BG)
