@@ -326,6 +326,9 @@ class Detection:
         aim_strength = s.get("aimStrength", 0.4)
         aim_input_mult = s.get("aimInputMultiplier", 0.5)
         aim_head_pos = s.get("aimHeadPos", 0.10)
+        aim_smoothness = s.get("aimSmoothness", 3.0)
+        aim_deadzone = s.get("aimDeadzone", 5.0)
+        _prev_move_x, _prev_move_y = 0.0, 0.0  # for smoothing
         stop_key = s.get("stopKey", "F6")
         trigger_min = s.get("triggerMinDelay", 0.0)
         trigger_max = s.get("triggerMaxDelay", 0.0)
@@ -511,11 +514,21 @@ class Detection:
 
                         off_x = aim_x - center[0]
                         off_y = aim_y - center[1]
-                        effective_str = aim_strength * aim_input_mult
-                        move_x = off_x * effective_str
-                        move_y = off_y * effective_str
-                        if abs(move_x) > 0.5 or abs(move_y) > 0.5:
-                            _move_mouse_relative(move_x, move_y)
+                        dist = math.hypot(off_x, off_y)
+                        # Deadzone — don't move if offset is tiny
+                        if dist < aim_deadzone:
+                            _prev_move_x, _prev_move_y = 0.0, 0.0
+                        else:
+                            effective_str = aim_strength * aim_input_mult
+                            target_mx = off_x * effective_str
+                            target_my = off_y * effective_str
+                            # Smoothing — lerp toward target (higher = smoother)
+                            alpha = 1.0 / aim_smoothness
+                            move_x = _prev_move_x + (target_mx - _prev_move_x) * alpha
+                            move_y = _prev_move_y + (target_my - _prev_move_y) * alpha
+                            _prev_move_x, _prev_move_y = move_x, move_y
+                            if abs(move_x) > 0.3 or abs(move_y) > 0.3:
+                                _move_mouse_relative(move_x, move_y)
 
                     # Check if crosshair is on or near target (shrunk by hitbox %)
                     pad = 10
@@ -844,6 +857,22 @@ class App(tk.Tk):
         self._aim_head_var = tk.StringVar(value="0.10")
         self._make_entry(fa_head, self._aim_head_var)
 
+        aim_row2 = tk.Frame(body, bg=self.BG)
+        aim_row2.pack(fill="x", pady=(0, 12))
+        aim_row2.columnconfigure((0, 1), weight=1)
+
+        fa_smooth = tk.Frame(aim_row2, bg=self.BG)
+        fa_smooth.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._add_label(fa_smooth, "SMOOTHNESS (1=instant, 5=smooth, 10=very)")
+        self._aim_smooth_var = tk.StringVar(value="3")
+        self._make_entry(fa_smooth, self._aim_smooth_var)
+
+        fa_dz = tk.Frame(aim_row2, bg=self.BG)
+        fa_dz.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self._add_label(fa_dz, "DEADZONE (px, no move if closer)")
+        self._aim_dz_var = tk.StringVar(value="5")
+        self._make_entry(fa_dz, self._aim_dz_var)
+
         # Fire mode section
         self._add_label(body, "FIRE MODE")
         fire_frame = tk.Frame(body, bg=self.BG)
@@ -1058,6 +1087,8 @@ class App(tk.Tk):
             "aimStrength": max(0.01, min(1.0, self._sf(self._aim_str_var.get(), 0.4))),
             "aimInputMultiplier": max(0.0, min(1.0, self._sf(self._aim_mult_var.get(), 0.5))),
             "aimHeadPos": max(0.0, min(1.0, self._sf(self._aim_head_var.get(), 0.10))),
+            "aimSmoothness": max(1.0, self._sf(self._aim_smooth_var.get(), 3)),
+            "aimDeadzone": max(0.0, self._sf(self._aim_dz_var.get(), 5)),
             "depthEnabled": self._depth_var.get(),
             "depthInterval": self._si(self._depth_int_var.get(), 3),
             "fireMode": self._fire_mode_var.get(),
