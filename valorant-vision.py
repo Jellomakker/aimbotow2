@@ -908,6 +908,22 @@ class App(tk.Tk):
         else:
             self._start()
 
+    @staticmethod
+    def _sf(val, default):
+        """Safe float parse — returns default on bad input."""
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return float(default)
+
+    @staticmethod
+    def _si(val, default):
+        """Safe int parse — returns default on bad input."""
+        try:
+            return int(float(val))
+        except (ValueError, TypeError):
+            return int(default)
+
     def _start(self):
         # Build detect list from checkboxes
         model_name = self._model_var.get().split("/")[-1].split("\\")[-1]
@@ -940,26 +956,26 @@ class App(tk.Tk):
             "model": model_key,
             "detect": detect,
             "toggleKey": self._key_var.get() or "`",
-            "cooldown": float(self._cd_var.get() or 0.3),
-            "confidence": float(self._conf_var.get() or 0.35),
-            "triggerMinDelay": float(self._delay_min_var.get() or 0),
-            "triggerMaxDelay": float(self._delay_max_var.get() or 0),
-            "monitorWidth": int(self._w_var.get() or 1920),
-            "monitorHeight": int(self._h_var.get() or 1080),
-            "monitorScale": float(self._sc_var.get() or 5),
+            "cooldown": self._sf(self._cd_var.get(), 0.3),
+            "confidence": self._sf(self._conf_var.get(), 0.35),
+            "triggerMinDelay": self._sf(self._delay_min_var.get(), 0),
+            "triggerMaxDelay": self._sf(self._delay_max_var.get(), 0),
+            "monitorWidth": self._si(self._w_var.get(), 1920),
+            "monitorHeight": self._si(self._h_var.get(), 1080),
+            "monitorScale": self._sf(self._sc_var.get(), 5),
             "onlyWhenStill": self._still_var.get(),
             "showOverlay": self._overlay_var.get(),
             "autoFire": self._autofire_var.get(),
             "aimAssist": self._aim_var.get(),
-            "aimStrength": max(0.01, min(1.0, float(self._aim_str_var.get() or 0.4))),
-            "aimInputMultiplier": max(0.0, min(1.0, float(self._aim_mult_var.get() or 0.5))),
-            "aimHeadPos": max(0.0, min(1.0, float(self._aim_head_var.get() or 0.10))),
+            "aimStrength": max(0.01, min(1.0, self._sf(self._aim_str_var.get(), 0.4))),
+            "aimInputMultiplier": max(0.0, min(1.0, self._sf(self._aim_mult_var.get(), 0.5))),
+            "aimHeadPos": max(0.0, min(1.0, self._sf(self._aim_head_var.get(), 0.10))),
             "fireMode": self._fire_mode_var.get(),
-            "burstMin": int(self._burst_min_var.get() or 3),
-            "burstMax": int(self._burst_max_var.get() or 7),
+            "burstMin": self._si(self._burst_min_var.get(), 3),
+            "burstMax": self._si(self._burst_max_var.get(), 7),
             "proximityEnabled": self._prox_var.get(),
-            "proximityPx": int(self._prox_px_var.get() or 30),
-            "holdGrace": float(self._hold_grace_var.get() or 0.6),
+            "proximityPx": self._si(self._prox_px_var.get(), 30),
+            "holdGrace": self._sf(self._hold_grace_var.get(), 0.6),
             "stopKey": "F6",
         }
 
