@@ -310,6 +310,23 @@ class Detection:
         model.to(device)
         self._notify(f"Running on {device.upper()} — press {s['toggleKey']} to activate")
 
+        # Depth estimation model (optional)
+        depth_pipe = None
+        use_depth = s.get("depthEnabled", False)
+        if use_depth:
+            self._notify("Loading depth model (Depth-Anything-V2)…")
+            try:
+                from transformers import pipeline as hf_pipeline
+                from PIL import Image as PILImage
+                _depth_model_id = "depth-anything/Depth-Anything-V2-Small-hf"
+                depth_pipe = hf_pipeline("depth-estimation", model=_depth_model_id, device=device)
+                self._notify("Depth model loaded!")
+            except Exception as e:
+                self._notify(f"Depth model failed: {e} — continuing without depth")
+                use_depth = False
+        depth_map = None
+        depth_frame_interval = max(1, int(s.get("depthInterval", 3)))
+
         show_overlay = True  # always show detection window
         only_still = s.get("onlyWhenStill", False)
         aim_assist = s.get("aimAssist", False)
