@@ -425,10 +425,11 @@ class Detection:
                         if abs(move_x) > 0.5 or abs(move_y) > 0.5:
                             _move_mouse_relative(move_x, move_y)
 
-                    # Check if crosshair is on or near target
-                    # Pad bbox by 10px so small head boxes aren't impossible to hit
+                    # Check if crosshair is on or near target HEAD region
+                    # Only fire when crosshair is in the top 30% of bounding box (head area)
                     pad = 10
-                    in_range = (x1 - pad) <= center[0] <= (x2 + pad) and (y1 - pad) <= center[1] <= (y2 + pad)
+                    head_y_bottom = y1 + (y2 - y1) * 0.30
+                    in_range = (x1 - pad) <= center[0] <= (x2 + pad) and (y1 - pad) <= center[1] <= (head_y_bottom + pad)
                     in_proximity = False
                     if proximity_enabled and not in_range:
                         px1 = x1 - proximity_px
@@ -481,7 +482,8 @@ class Detection:
                     cv2.rectangle(shot, (0, 0), (20, 20), color, -1)
                     cv2.putText(shot, "valorant-vision", (25, 18),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
-                    cv2.imshow("valorant-vision", shot)
+                    disp = cv2.resize(shot, (384, 216))
+                    cv2.imshow("valorant-vision", disp)
                     if cv2.waitKey(1) == ord("l"):
                         break
 
