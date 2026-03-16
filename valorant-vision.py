@@ -413,6 +413,17 @@ class Detection:
                 else:
                     df = pd.DataFrame(columns=["xmin","ymin","xmax","ymax","conf","class"])
 
+                # Depth estimation (run every N frames)
+                if use_depth and depth_pipe and frame_count % depth_frame_interval == 0:
+                    try:
+                        from PIL import Image as PILImage
+                        pil_img = PILImage.fromarray(cv2.cvtColor(shot, cv2.COLOR_BGR2RGB))
+                        depth_result = depth_pipe(pil_img)
+                        import numpy as _np
+                        depth_map = _np.array(depth_result["depth"], dtype=_np.float32)
+                    except Exception:
+                        pass
+
                 for i, (_, row) in enumerate(df.iterrows()):
                     try:
                         x1, y1, x2, y2 = int(row.xmin), int(row.ymin), int(row.xmax), int(row.ymax)
@@ -424,13 +435,29 @@ class Detection:
                         cx = (x2 - x1) / 2 + x1
                         cy = (y2 - y1) / 2 + y1
                         d = math.dist([cx, cy], center)
-                        if d < closest_dist:
-                            closest_dist = d
+                        # Depth-weighted scoring: closer targets get priority
+                        score = d
+                        det_depth = 0.0
+                        if use_depth and depth_map is not None:
+                            dcx, dcy = int(cx), int(cy)
+                            dh, dw = depth_map.shape[:2]
+                            if 0 <= dcx < dw and 0 <= dcy < dh:
+                                det_depth = depth_map[dcy, dcx] / 255.0
+                                # Lower depth = closer = lower score = higher priority
+                                score = d * (0.3 + 0.7 * det_depth)
+                        if score < closest_dist:
+                            closest_dist = score
                             closest_idx = i
                         if show_overlay:
                             conf_pct = int(row.conf * 100)
                             cv2.rectangle(shot, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                            cv2.putText(shot, f"{conf_pct}%", (x1, y1 - 5),
+                            depth_txt = ""
+                            if use_depth and depth_map is not None:
+                                _dcx, _dcy = int(cx), int(cy)
+                                _dh, _dw = depth_map.shape[:2]
+                                if 0 <= _dcx < _dw and 0 <= _dcy < _dh:
+                                    depth_txt = f" D:{depth_map[_dcy,_dcx]:.0f}"
+                            cv2.putText(shot, f"{conf_pct}%{depth_txt}", (x1, y1 - 5),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
                     except Exception:
                         pass
@@ -856,6 +883,29 @@ class App(tk.Tk):
         self._prox_px_var = tk.StringVar(value="30")
         self._make_entry(fp_px, self._prox_px_var)
 
+        # Depth estimation
+        depth_frame = tk.Frame(body, bg=self.BG)
+        depth_frame.pack(fill="x", pady=(0, 4))
+
+        self._depth_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            depth_frame, text="Depth priority (closer targets first — needs GPU)",
+            variable=self._depth_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        depth_row = tk.Frame(body, bg=self.BG)
+        depth_row.pack(fill="x", pady=(0, 12))
+        depth_row.columnconfigure((0,), weight=1)
+
+        fd_int = tk.Frame(depth_row, bg=self.BG)
+        fd_int.grid(row=0, column=0, sticky="ew")
+        self._add_label(fd_int, "DEPTH EVERY N FRAMES (1=every, 3=default)")
+        self._depth_int_var = tk.StringVar(value="3")
+        self._make_entry(fd_int, self._depth_int_var)
+
         # Spray hold setting
         hold_row = tk.Frame(body, bg=self.BG)
         hold_row.pack(fill="x", pady=(0, 12))
@@ -978,6 +1028,8 @@ class App(tk.Tk):
             "aimStrength": max(0.01, min(1.0, self._sf(self._aim_str_var.get(), 0.4))),
             "aimInputMultiplier": max(0.0, min(1.0, self._sf(self._aim_mult_var.get(), 0.5))),
             "aimHeadPos": max(0.0, min(1.0, self._sf(self._aim_head_var.get(), 0.10))),
+            "depthEnabled": self._depth_var.get(),
+            "depthInterval": self._si(self._depth_int_var.get(), 3),
             "fireMode": self._fire_mode_var.get(),
             "burstMin": self._si(self._burst_min_var.get(), 3),
             "burstMax": self._si(self._burst_max_var.get(), 7),
