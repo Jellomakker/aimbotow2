@@ -303,6 +303,16 @@ class Detection:
         model.to(device)
         self._notify(f"Running on {device.upper()} — press {s['toggleKey']} to activate")
 
+        # Hitbox threshold
+        hb_row = tk.Frame(body, bg=self.BG)
+        hb_row.pack(fill="x", pady=(0, 12))
+        hb_row.columnconfigure((0,), weight=1)
+        fhb = tk.Frame(hb_row, bg=self.BG)
+        fhb.grid(row=0, column=0, sticky="ew")
+        self._add_label(fhb, "HITBOX % (100=full box, 50=center half, lower=stricter)")
+        self._hitbox_var = tk.StringVar(value="100")
+        self._make_entry(fhb, self._hitbox_var)
+
         # Depth estimation model (optional)
         depth_pipe = None
         use_depth = s.get("depthEnabled", False)
@@ -333,6 +343,7 @@ class Detection:
         burst_min = int(s.get("burstMin", 3))
         burst_max = int(s.get("burstMax", 7))
         proximity_enabled = s.get("proximityEnabled", False)
+        hitbox_pct = s.get("hitboxPct", 100) / 100.0  # 1.0 = full box, 0.5 = center half
         proximity_px = s.get("proximityPx", 30)  # pixels from bbox edge
 
         frame_count = 0
@@ -516,10 +527,19 @@ class Detection:
                         if abs(move_x) > 0.5 or abs(move_y) > 0.5:
                             _move_mouse_relative(move_x, move_y)
 
-                    # Check if crosshair is on or near target (full body box)
+                    # Check if crosshair is on or near target (shrunk by hitbox %)
                     pad = 10
                     head_bottom = y1 + (y2 - y1) * max(0.35, aim_head_pos * 2)
-                    in_range = (x1 - pad) <= center[0] <= (x2 + pad) and (y1 - pad) <= center[1] <= (head_bottom + pad)
+                    # Shrink box inward based on hitbox_pct (100%=full, 50%=center half)
+                    bw = x2 - x1
+                    bh = head_bottom - y1
+                    shrink_x = bw * (1.0 - hitbox_pct) / 2
+                    shrink_y = bh * (1.0 - hitbox_pct) / 2
+                    hx1 = x1 + shrink_x - pad
+                    hy1 = y1 + shrink_y - pad
+                    hx2 = x2 - shrink_x + pad
+                    hy2 = head_bottom - shrink_y + pad
+                    in_range = hx1 <= center[0] <= hx2 and hy1 <= center[1] <= hy2
                     in_proximity = False
                     if proximity_enabled and not in_range:
                         px1 = x1 - proximity_px
@@ -1044,6 +1064,7 @@ class App(tk.Tk):
             "burstMin": self._si(self._burst_min_var.get(), 3),
             "burstMax": self._si(self._burst_max_var.get(), 7),
             "proximityEnabled": self._prox_var.get(),
+            "hitboxPct": max(1, min(100, self._si(self._hitbox_var.get(), 100))),
             "proximityPx": self._si(self._prox_px_var.get(), 30),
             "holdGrace": self._sf(self._hold_grace_var.get(), 0.6),
             "stopKey": "F6",
