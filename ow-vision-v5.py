@@ -823,8 +823,8 @@ class App(tk.Tk):
 
         # Model selector
         self._add_label(body, "MODEL")
-        # Default to v3-roboflow if available
-        _default_model = "v3-roboflow.pt" if "v3-roboflow.pt" in self._models else (self._models[-1] if self._models else "")
+        # Default to v5-ow2 if available
+        _default_model = "v5-ow2.pt" if "v5-ow2.pt" in self._models else (self._models[-1] if self._models else "")
         self._model_var = tk.StringVar(value=_default_model)
         mf = tk.Frame(body, bg=self.BG)
         mf.pack(fill="x", pady=(0, 12))
