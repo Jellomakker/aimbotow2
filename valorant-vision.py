@@ -298,7 +298,8 @@ class Detection:
         self._mouse_held = False
         self._last_target_time = 0
         self._counter_strafe = settings.get("counterStrafe", False)
-        self._cs_duration = settings.get("counterStrafeDuration", 0.03)
+        self._cs_min = settings.get("counterStrafeMin", 0.02)
+        self._cs_max = settings.get("counterStrafeMax", 0.05)
 
     def start(self):
         if self.running:
@@ -507,6 +508,7 @@ class Detection:
                     except Exception:
                         pass
 
+                target_classes = s.get('targetClasses', s['detect'])
                 for i, (_, row) in enumerate(df.iterrows()):
                     try:
                         x1, y1, x2, y2 = int(row.xmin), int(row.ymin), int(row.xmax), int(row.ymax)
@@ -528,7 +530,8 @@ class Detection:
                                 det_depth = depth_map[dcy, dcx] / 255.0
                                 # Lower depth = closer = lower score = higher priority
                                 score = d * (0.3 + 0.7 * det_depth)
-                        if score < closest_dist:
+                        is_target = int(row['class']) in target_classes
+                        if is_target and score < closest_dist:
                             closest_dist = score
                             closest_idx = i
                         if show_overlay:
@@ -627,7 +630,7 @@ class Detection:
                         in_range = ((hs_box[0] - pad) <= center[0] <= (hs_box[2] + pad) and
                                     (hs_box[1] - pad) <= center[1] <= (hs_box[3] + pad))
                     else:
-                        head_bottom = y1 + (y2 - y1) * max(0.35, aim_head_pos * 2)
+                        head_bottom = y1 + (y2 - y1) * 0.20
                         # Shrink box inward based on hitbox_pct (100%=full, 50%=center half)
                         bw = x2 - x1
                         bh = head_bottom - y1
@@ -656,7 +659,7 @@ class Detection:
 
                         # Counter-strafe: tap opposite key to stop momentum
                         if self._counter_strafe and _is_moving():
-                            _counter_strafe(self._cs_duration)
+                            _counter_strafe(random.uniform(self._cs_min, self._cs_max))
 
                         if fire_mode == "rapid":
                             # Rapid: hold mouse down the entire time
@@ -1126,13 +1129,19 @@ class App(tk.Tk):
 
         cs_row = tk.Frame(body, bg=self.BG)
         cs_row.pack(fill="x", pady=(0, 12))
-        cs_row.columnconfigure((0,), weight=1)
+        cs_row.columnconfigure((0, 1), weight=1)
 
-        fcs_dur = tk.Frame(cs_row, bg=self.BG)
-        fcs_dur.grid(row=0, column=0, sticky="ew")
-        self._add_label(fcs_dur, "TAP DURATION (s)")
-        self._cs_dur_var = tk.StringVar(value="0.03")
-        self._make_entry(fcs_dur, self._cs_dur_var)
+        fcs_min = tk.Frame(cs_row, bg=self.BG)
+        fcs_min.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._add_label(fcs_min, "TAP MIN (s)")
+        self._cs_min_var = tk.StringVar(value="0.02")
+        self._make_entry(fcs_min, self._cs_min_var)
+
+        fcs_max = tk.Frame(cs_row, bg=self.BG)
+        fcs_max.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self._add_label(fcs_max, "TAP MAX (s)")
+        self._cs_max_var = tk.StringVar(value="0.05")
+        self._make_entry(fcs_max, self._cs_max_var)
 
         # Start / Stop button
         self._btn = tk.Button(
@@ -1203,15 +1212,13 @@ class App(tk.Tk):
         # Build detect list from checkboxes
         model_name = self._model_var.get().split("/")[-1].split("\\")[-1]
         if "v4" in model_name.lower():
-            # v4 model: 0=enemy, 1=headshot_splash (enemy-only, never allies)
-            detect = []
-            if self._body_var.get():
-                detect.append(0)  # enemy body
-            if self._head_var.get():
-                detect.append(1)  # headshot splash
+            # v4 model — always detect both classes; only fire at enemy (0)
+            detect = [0, 1]
+            target_classes = [0]  # only fire at enemies
         elif model_name == "v3-roboflow.pt":
             # v3 model: single class 0 = player (body+head combined)
             detect = [0]
+            target_classes = [0]
         else:
             # Legacy models
             detect = []
@@ -1219,6 +1226,7 @@ class App(tk.Tk):
                 detect.append(1)
             if self._body_var.get():
                 detect.append(0)
+            target_classes = detect[:]
         if not detect:
             messagebox.showwarning("No target", "Turn on at least Head or Body.")
             return
@@ -1267,7 +1275,9 @@ class App(tk.Tk):
             "proximityPx": self._si(self._prox_px_var.get(), 30),
             "holdGrace": self._sf(self._hold_grace_var.get(), 0.6),
             "counterStrafe": self._cs_var.get(),
-            "counterStrafeDuration": max(0.01, self._sf(self._cs_dur_var.get(), 0.03)),
+            "counterStrafeMin": max(0.005, self._sf(self._cs_min_var.get(), 0.02)),
+            "counterStrafeMax": max(0.005, self._sf(self._cs_max_var.get(), 0.05)),
+            "targetClasses": target_classes,
             "stopKey": "F6",
         }
 
