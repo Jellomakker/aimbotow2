@@ -437,8 +437,11 @@ class Detection:
                 # --- SAHI-style tiled + multi-zoom detection ---
                 fh, fw = shot.shape[:2]
                 all_dets = []
+                # Match imgsz to training size (v5 trained at 416)
+                _model_name = s["model"].split("/")[-1].split("\\")[-1].lower()
+                _imgsz = 416 if "v5" in _model_name else 640
                 _pa = dict(save=False, classes=s["detect"], iou=0.45,
-                           imgsz=640, verbose=False, device=device, half=False)
+                           imgsz=_imgsz, verbose=False, device=device, half=False)
 
                 # Pass 1: full frame at normal confidence
                 r1 = model.predict(shot, conf=s["confidence"], **_pa)
@@ -821,21 +824,21 @@ class App(tk.Tk):
         self.bind_all("<Button-4>", _on_mousewheel_linux)
         self.bind_all("<Button-5>", _on_mousewheel_linux)
 
-        # Model selector
+        # Model selector (dropdown so all models are scrollable)
         self._add_label(body, "MODEL")
         # Default to v5-ow2 if available
         _default_model = "v5-ow2.pt" if "v5-ow2.pt" in self._models else (self._models[-1] if self._models else "")
         self._model_var = tk.StringVar(value=_default_model)
         mf = tk.Frame(body, bg=self.BG)
         mf.pack(fill="x", pady=(0, 12))
-        for m in self._models:
-            tk.Radiobutton(
-                mf, text=m.replace(".pt", ""), variable=self._model_var, value=m,
-                bg=self.BG, fg=self.FG, selectcolor=self.BG2,
-                activebackground=self.BG, activeforeground=self.ACCENT2,
-                font=("Segoe UI", 10), indicatoron=0, padx=14, pady=5,
-                bd=0, relief="flat", highlightthickness=0,
-            ).pack(side="left", padx=(0, 6))
+        _model_options = self._models if self._models else ["v5-ow2.pt"]
+        om = tk.OptionMenu(mf, self._model_var, *_model_options)
+        om.config(bg=self.INPUT_BG, fg=self.FG, font=("Segoe UI", 10),
+                  activebackground=self.BG2, activeforeground=self.FG,
+                  highlightthickness=0, bd=0, relief="flat", width=20)
+        om["menu"].config(bg=self.INPUT_BG, fg=self.FG, font=("Segoe UI", 10),
+                          activebackground=self.ACCENT, activeforeground="#fff")
+        om.pack(side="left", padx=(0, 6))
         tk.Button(
             mf, text="Browse .pt", font=("Segoe UI", 9),
             bg=self.INPUT_BG, fg=self.DIM, bd=0, relief="flat",
