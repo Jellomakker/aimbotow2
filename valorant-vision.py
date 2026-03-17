@@ -395,6 +395,7 @@ class Detection:
         aim_head_pos = s.get("aimHeadPos", 0.10)
         aim_smoothness = s.get("aimSmoothness", 3.0)
         aim_deadzone = s.get("aimDeadzone", 5.0)
+        mouse_override = s.get("mouseOverride", 0.5)  # 0=your mouse only, 1=bot only
         _prev_move_x, _prev_move_y = 0.0, 0.0  # for smoothing
         stop_key = s.get("stopKey", "F6")
         trigger_min = s.get("triggerMinDelay", 0.0)
@@ -410,6 +411,7 @@ class Detection:
         proximity_px = s.get("proximityPx", 30)  # pixels from bbox edge
 
         frame_count = 0
+        fire_count = 0
         last_status_time = 0
         hold_grace = s.get("holdGrace", 0.6)  # seconds to keep holding after losing target
 
@@ -574,7 +576,7 @@ class Detection:
                             aim_status = " | AIM: ON TARGET"
                         else:
                             aim_status = " | AIM: off target"
-                    self._notify(f"TB: {tb} | Det: {n_det} | F: {frame_count}{aim_status}")
+                    self._notify(f"TB: {tb} | Det: {n_det} | F: {frame_count} | Shots: {fire_count}{aim_status}")
 
                 if closest_idx != -1:
                     r = df.iloc[closest_idx]
@@ -621,6 +623,8 @@ class Detection:
                             move_x = _prev_move_x + (target_mx - _prev_move_x) * alpha
                             move_y = _prev_move_y + (target_my - _prev_move_y) * alpha
                             _prev_move_x, _prev_move_y = move_x, move_y
+                            move_x *= mouse_override
+                            move_y *= mouse_override
                             if abs(move_x) > 0.3 or abs(move_y) > 0.3:
                                 _move_mouse_relative(move_x, move_y)
 
@@ -650,6 +654,15 @@ class Detection:
 
                     should_fire = in_range or in_proximity
 
+                    # Draw fire status on overlay
+                    if show_overlay:
+                        if should_fire:
+                            cv2.putText(shot, "FIRE", (center[0]-20, center[1]-20),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+                        elif closest_idx != -1:
+                            cv2.putText(shot, "NO FIRE", (center[0]-30, center[1]-20),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
+
                     if should_fire and self.triggerbot:
                         self._last_target_time = now
 
@@ -667,6 +680,7 @@ class Detection:
                                 if delay > 0:
                                     time.sleep(delay)
                                 _real_mouse_down()
+                                fire_count += 1
                                 self._mouse_held = True
                             # Apply horizontal recoil control while holding
                             if recoil_enabled and self._mouse_held:
@@ -679,6 +693,7 @@ class Detection:
                                 if delay > 0:
                                     time.sleep(delay)
                                 _real_click()
+                                fire_count += 1
                                 self.last_click = now
                                 if recoil_enabled:
                                     h_recoil = random.uniform(recoil_min, recoil_max) * random.choice([-1, 1])
@@ -973,6 +988,16 @@ class App(tk.Tk):
         self._add_label(fa_mult, "INPUT MULT (0=you, 1=bot)")
         self._aim_mult_var = tk.StringVar(value="0.5")
         self._make_entry(fa_mult, self._aim_mult_var)
+
+        aim_row2 = tk.Frame(body, bg=self.BG)
+        aim_row2.pack(fill="x", pady=(0, 12))
+        aim_row2.columnconfigure((0,), weight=1)
+
+        fa_override = tk.Frame(aim_row2, bg=self.BG)
+        fa_override.grid(row=0, column=0, sticky="ew")
+        self._add_label(fa_override, "MOUSE OVERRIDE (0=your mouse, 1=full bot control)")
+        self._mouse_override_var = tk.StringVar(value="0.5")
+        self._make_entry(fa_override, self._mouse_override_var)
 
         fa_head = tk.Frame(aim_row, bg=self.BG)
         fa_head.grid(row=0, column=2, sticky="ew", padx=(6, 0))
@@ -1274,6 +1299,7 @@ class App(tk.Tk):
             "aimAssist": self._aim_var.get(),
             "aimStrength": max(0.01, min(1.0, self._sf(self._aim_str_var.get(), 0.4))),
             "aimInputMultiplier": max(0.0, min(1.0, self._sf(self._aim_mult_var.get(), 0.5))),
+            "mouseOverride": max(0.0, min(1.0, self._sf(self._mouse_override_var.get(), 0.5))),
             "aimHeadPos": max(0.0, min(1.0, self._sf(self._aim_head_var.get(), 0.10))),
             "aimSmoothness": max(1.0, self._sf(self._aim_smooth_var.get(), 3)),
             "aimDeadzone": max(0.0, self._sf(self._aim_dz_var.get(), 5)),
