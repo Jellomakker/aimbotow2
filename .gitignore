@@ -7,3 +7,5 @@ __pycache__/
 *.pyc
 yolov8n.pt
 ow2-v5-dataset/
+val-dataset/
+valrant-dataset/
