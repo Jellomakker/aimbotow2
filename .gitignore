@@ -1,0 +1,8 @@
+runs/
+valorant-dataset/
+valorant-v4-dataset/
+dataset/
+*.zip
+__pycache__/
+*.pyc
+yolov8n.pt

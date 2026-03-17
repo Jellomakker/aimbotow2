@@ -1,5 +1,5 @@
 """
-Valorant AI Triggerbot — Single-file script
+Valorant Vision v4 — AI Triggerbot + Aim Assist + Counter-Strafe
 Run this file → GUI opens → pick settings → press START
 
 Requirements (install once):
@@ -8,8 +8,8 @@ Requirements (install once):
 Place your YOLO .pt model files in the same folder as this script,
 or they will be looked for in a "models/" subfolder next to the script.
 
-NOTE: The included v1/v2.pt models are trained for Overwatch 2.
-      For Valorant you need a Valorant-trained YOLO model.
+v4 model: 2 classes — enemy (0) + headshot_splash (1)
+       Only shoots enemies, never allies.
 """
 
 import os
@@ -29,10 +29,8 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _MODELS_DIR = os.path.join(_SCRIPT_DIR, "models")
 
 _MODEL_URLS = {
+    "v4-valorant.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v4-valorant.pt",
     "v3-roboflow.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v3-roboflow.pt",
-    "v2.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v2.pt",
-    "v1.1.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v1.1.pt",
-    "v1.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v1.pt",
 }
 
 
@@ -220,6 +218,72 @@ def _move_mouse_relative(dx, dy):
 
 
 # ---------------------------------------------------------------------------
+# Counter-strafe via SendInput (game-compatible keyboard input)
+# ---------------------------------------------------------------------------
+_INPUT_KEYBOARD = 1
+_KEYEVENTF_SCANCODE = 0x0008
+_KEYEVENTF_KEYUP = 0x0002
+
+# DirectInput scancodes for WASD
+_DI_SCAN = {"w": 0x11, "a": 0x1E, "s": 0x1F, "d": 0x20}
+_OPPOSITE = {"w": "s", "s": "w", "a": "d", "d": "a"}
+
+
+def _send_key(scancode, key_up=False):
+    """Send a single key event via SendInput (DirectInput scancode)."""
+    if sys.platform != "win32":
+        return
+
+    extra = ctypes.POINTER(ctypes.c_ulong)()
+
+    class KEYBDINPUT(ctypes.Structure):
+        _fields_ = [
+            ("wVk", ctypes.c_ushort),
+            ("wScan", ctypes.c_ushort),
+            ("dwFlags", ctypes.c_ulong),
+            ("time", ctypes.c_ulong),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
+
+    class INPUT(ctypes.Structure):
+        class _INPUT(ctypes.Union):
+            _fields_ = [("ki", KEYBDINPUT)]
+        _fields_ = [
+            ("type", ctypes.c_ulong),
+            ("ii", _INPUT),
+        ]
+
+    flags = _KEYEVENTF_SCANCODE
+    if key_up:
+        flags |= _KEYEVENTF_KEYUP
+
+    inp = INPUT()
+    inp.type = _INPUT_KEYBOARD
+    inp.ii.ki.wVk = 0
+    inp.ii.ki.wScan = scancode
+    inp.ii.ki.dwFlags = flags
+    inp.ii.ki.dwExtraInfo = extra
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+
+def _counter_strafe(duration=0.03):
+    """Tap opposite movement key briefly to stop momentum before shooting."""
+    try:
+        import keyboard as kb
+        for key, opp in _OPPOSITE.items():
+            if kb.is_pressed(key):
+                sc = _DI_SCAN.get(opp)
+                if sc:
+                    _send_key(sc, key_up=False)
+                    time.sleep(duration)
+                    _send_key(sc, key_up=True)
+                return True
+    except Exception:
+        pass
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Detection engine (runs in a background thread)
 # ---------------------------------------------------------------------------
 class Detection:
@@ -231,8 +295,10 @@ class Detection:
         self.last_click = 0
         self._toggle_cooldown = 0
         self._thread = None
-        self._mouse_held = False  # track if we're holding left click (rapid mode)
-        self._last_target_time = 0  # last time we saw a valid target (for grace period)
+        self._mouse_held = False
+        self._last_target_time = 0
+        self._counter_strafe = settings.get("counterStrafe", False)
+        self._cs_duration = settings.get("counterStrafeDuration", 0.03)
 
     def start(self):
         if self.running:
@@ -467,14 +533,17 @@ class Detection:
                             closest_idx = i
                         if show_overlay:
                             conf_pct = int(row.conf * 100)
-                            cv2.rectangle(shot, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                            # Green for headshot_splash (class 1), blue for enemy (class 0)
+                            box_color = (0, 255, 0) if int(row['class']) == 1 else (255, 0, 0)
+                            cv2.rectangle(shot, (x1, y1), (x2, y2), box_color, 2)
                             depth_txt = ""
                             if use_depth and depth_map is not None:
                                 _dcx, _dcy = int(cx), int(cy)
                                 _dh, _dw = depth_map.shape[:2]
                                 if 0 <= _dcx < _dw and 0 <= _dcy < _dh:
                                     depth_txt = f" D:{depth_map[_dcy,_dcx]:.0f}"
-                            cv2.putText(shot, f"{conf_pct}%{depth_txt}", (x1, y1 - 5),
+                            label = f"HS {conf_pct}%" if int(row['class']) == 1 else f"{conf_pct}%"
+                            cv2.putText(shot, f"{label}{depth_txt}", (x1, y1 - 5),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
                     except Exception:
                         pass
@@ -510,10 +579,29 @@ class Detection:
                     target_cx = (x1 + x2) / 2
                     target_cy = (y1 + y2) / 2
 
-                    # Aim assist — aims at upper 5th center of body bbox (head area)
+                    # Check if v4 model detected a headshot_splash (class 1)
+                    # overlapping this enemy — if so, use its bbox as head region
+                    hs_box = None
+                    if len(df) > 0 and 'class' in df.columns:
+                        hs_rows = df[df['class'] == 1]
+                        for _, hsr in hs_rows.iterrows():
+                            hx1_, hy1_, hx2_, hy2_ = int(hsr.xmin), int(hsr.ymin), int(hsr.xmax), int(hsr.ymax)
+                            ox1_ = max(x1, hx1_)
+                            oy1_ = max(y1, hy1_)
+                            ox2_ = min(x2, hx2_)
+                            oy2_ = min(y2, hy2_)
+                            if ox1_ < ox2_ and oy1_ < oy2_:
+                                hs_box = (hx1_, hy1_, hx2_, hy2_)
+                                break
+
+                    # Aim assist — aims at headshot splash if available, else head position
                     if aim_assist:
-                        aim_x = target_cx
-                        aim_y = y1 + (y2 - y1) * aim_head_pos  # configurable head position
+                        if hs_box:
+                            aim_x = (hs_box[0] + hs_box[2]) / 2
+                            aim_y = (hs_box[1] + hs_box[3]) / 2
+                        else:
+                            aim_x = target_cx
+                            aim_y = y1 + (y2 - y1) * aim_head_pos  # configurable head position
 
                         off_x = aim_x - center[0]
                         off_y = aim_y - center[1]
@@ -533,19 +621,23 @@ class Detection:
                             if abs(move_x) > 0.3 or abs(move_y) > 0.3:
                                 _move_mouse_relative(move_x, move_y)
 
-                    # Check if crosshair is on or near target (shrunk by hitbox %)
+                    # Check if crosshair is on or near target
                     pad = 10
-                    head_bottom = y1 + (y2 - y1) * max(0.35, aim_head_pos * 2)
-                    # Shrink box inward based on hitbox_pct (100%=full, 50%=center half)
-                    bw = x2 - x1
-                    bh = head_bottom - y1
-                    shrink_x = bw * (1.0 - hitbox_pct) / 2
-                    shrink_y = bh * (1.0 - hitbox_pct) / 2
-                    hx1 = x1 + shrink_x - pad
-                    hy1 = y1 + shrink_y - pad
-                    hx2 = x2 - shrink_x + pad
-                    hy2 = head_bottom - shrink_y + pad
-                    in_range = hx1 <= center[0] <= hx2 and hy1 <= center[1] <= hy2
+                    if hs_box:
+                        in_range = ((hs_box[0] - pad) <= center[0] <= (hs_box[2] + pad) and
+                                    (hs_box[1] - pad) <= center[1] <= (hs_box[3] + pad))
+                    else:
+                        head_bottom = y1 + (y2 - y1) * max(0.35, aim_head_pos * 2)
+                        # Shrink box inward based on hitbox_pct (100%=full, 50%=center half)
+                        bw = x2 - x1
+                        bh = head_bottom - y1
+                        shrink_x = bw * (1.0 - hitbox_pct) / 2
+                        shrink_y = bh * (1.0 - hitbox_pct) / 2
+                        hx1 = x1 + shrink_x - pad
+                        hy1 = y1 + shrink_y - pad
+                        hx2 = x2 - shrink_x + pad
+                        hy2 = head_bottom - shrink_y + pad
+                        in_range = hx1 <= center[0] <= hx2 and hy1 <= center[1] <= hy2
                     in_proximity = False
                     if proximity_enabled and not in_range:
                         px1 = x1 - proximity_px
@@ -561,6 +653,10 @@ class Detection:
 
                         if only_still and _is_moving():
                             continue
+
+                        # Counter-strafe: tap opposite key to stop momentum
+                        if self._counter_strafe and _is_moving():
+                            _counter_strafe(self._cs_duration)
 
                         if fire_mode == "rapid":
                             # Rapid: hold mouse down the entire time
@@ -602,7 +698,7 @@ class Detection:
                 if show_overlay:
                     color = (0, 255, 0) if self.triggerbot else (0, 0, 255)
                     cv2.rectangle(shot, (0, 0), (20, 20), color, -1)
-                    cv2.putText(shot, "valorant-vision", (25, 18),
+                    cv2.putText(shot, "valorant-vision v4", (25, 18),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
                     disp = cv2.resize(shot, (384, 216))
                     cv2.imshow("valorant-vision", disp)
@@ -635,7 +731,7 @@ class App(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("Valorant Vision")
+        self.title("Valorant Vision v4")
         self.configure(bg=self.BG)
         self.resizable(False, True)
         self.geometry("440x900")
@@ -654,9 +750,9 @@ class App(tk.Tk):
         # Header
         hdr = tk.Frame(self, bg=self.BG2, padx=24, pady=18)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="VALORANT VISION", font=("Segoe UI", 20, "bold"),
+        tk.Label(hdr, text="VALORANT VISION v4", font=("Segoe UI", 20, "bold"),
                  fg=self.ACCENT2, bg=self.BG2).pack(anchor="w")
-        tk.Label(hdr, text="AI Triggerbot  •  F6 = stop from anywhere", font=("Segoe UI", 10),
+        tk.Label(hdr, text="AI Triggerbot  •  Enemy-only  •  Counter-strafe  •  F6 = stop", font=("Segoe UI", 10),
                  fg=self.DIM, bg=self.BG2).pack(anchor="w")
 
         # Scrollable body
@@ -1014,6 +1110,30 @@ class App(tk.Tk):
         self._hold_grace_var = tk.StringVar(value="0.6")
         self._make_entry(fh_grace, self._hold_grace_var)
 
+        # Counter-strafe section
+        self._add_label(body, "COUNTER-STRAFE")
+        cs_frame = tk.Frame(body, bg=self.BG)
+        cs_frame.pack(fill="x", pady=(0, 4))
+
+        self._cs_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            cs_frame, text="Auto counter-strafe before firing (tap opposite key)",
+            variable=self._cs_var,
+            bg=self.BG, fg=self.FG, selectcolor=self.BG2,
+            activebackground=self.BG, activeforeground=self.FG,
+            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+        ).pack(anchor="w")
+
+        cs_row = tk.Frame(body, bg=self.BG)
+        cs_row.pack(fill="x", pady=(0, 12))
+        cs_row.columnconfigure((0,), weight=1)
+
+        fcs_dur = tk.Frame(cs_row, bg=self.BG)
+        fcs_dur.grid(row=0, column=0, sticky="ew")
+        self._add_label(fcs_dur, "TAP DURATION (s)")
+        self._cs_dur_var = tk.StringVar(value="0.03")
+        self._make_entry(fcs_dur, self._cs_dur_var)
+
         # Start / Stop button
         self._btn = tk.Button(
             body, text="START", font=("Segoe UI", 13, "bold"),
@@ -1026,7 +1146,7 @@ class App(tk.Tk):
 
         # Status
         self._status_lbl = tk.Label(
-            body, text="Ready  —  press START then toggle key (`) in-game",
+            body, text="Ready  —  press START then toggle key (`) in-game • v4",
             font=("Segoe UI", 10), fg=self.DIM, bg=self.BG, wraplength=380,
         )
         self._status_lbl.pack(pady=(10, 0))
@@ -1082,11 +1202,18 @@ class App(tk.Tk):
     def _start(self):
         # Build detect list from checkboxes
         model_name = self._model_var.get().split("/")[-1].split("\\")[-1]
-        if model_name == "v3-roboflow.pt":
+        if "v4" in model_name.lower():
+            # v4 model: 0=enemy, 1=headshot_splash (enemy-only, never allies)
+            detect = []
+            if self._body_var.get():
+                detect.append(0)  # enemy body
+            if self._head_var.get():
+                detect.append(1)  # headshot splash
+        elif model_name == "v3-roboflow.pt":
             # v3 model: single class 0 = player (body+head combined)
             detect = [0]
         else:
-            # v1/v2 models: 0=enemy body, 1=enemy head
+            # Legacy models
             detect = []
             if self._head_var.get():
                 detect.append(1)
@@ -1139,6 +1266,8 @@ class App(tk.Tk):
             "hitboxPct": max(1, min(100, self._si(self._hitbox_var.get(), 100))),
             "proximityPx": self._si(self._prox_px_var.get(), 30),
             "holdGrace": self._sf(self._hold_grace_var.get(), 0.6),
+            "counterStrafe": self._cs_var.get(),
+            "counterStrafeDuration": max(0.01, self._sf(self._cs_dur_var.get(), 0.03)),
             "stopKey": "F6",
         }
 
