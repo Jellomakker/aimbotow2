@@ -630,16 +630,15 @@ class Detection:
                         in_range = ((hs_box[0] - pad) <= center[0] <= (hs_box[2] + pad) and
                                     (hs_box[1] - pad) <= center[1] <= (hs_box[3] + pad))
                     else:
-                        head_bottom = y1 + (y2 - y1) * 0.20
-                        # Shrink box inward based on hitbox_pct (100%=full, 50%=center half)
+                        # Full bbox fire zone — model already detects enemies only
                         bw = x2 - x1
-                        bh = head_bottom - y1
+                        bh = y2 - y1
                         shrink_x = bw * (1.0 - hitbox_pct) / 2
                         shrink_y = bh * (1.0 - hitbox_pct) / 2
                         hx1 = x1 + shrink_x - pad
                         hy1 = y1 + shrink_y - pad
                         hx2 = x2 - shrink_x + pad
-                        hy2 = head_bottom - shrink_y + pad
+                        hy2 = y2 - shrink_y + pad
                         in_range = hx1 <= center[0] <= hx2 and hy1 <= center[1] <= hy2
                     in_proximity = False
                     if proximity_enabled and not in_range:
@@ -701,6 +700,22 @@ class Detection:
                 if show_overlay:
                     color = (0, 255, 0) if self.triggerbot else (0, 0, 255)
                     cv2.rectangle(shot, (0, 0), (20, 20), color, -1)
+                    # Draw fire zone box for closest target
+                    if closest_idx != -1:
+                        _r = df.iloc[closest_idx]
+                        _fx1, _fy1, _fx2, _fy2 = int(_r.xmin), int(_r.ymin), int(_r.xmax), int(_r.ymax)
+                        _fbw = _fx2 - _fx1
+                        _fbh = _fy2 - _fy1
+                        _fsx = _fbw * (1.0 - hitbox_pct) / 2
+                        _fsy = _fbh * (1.0 - hitbox_pct) / 2
+                        _fpad = 10
+                        _fhx1 = int(_fx1 + _fsx - _fpad)
+                        _fhy1 = int(_fy1 + _fsy - _fpad)
+                        _fhx2 = int(_fx2 - _fsx + _fpad)
+                        _fhy2 = int(_fy2 - _fsy + _fpad)
+                        cv2.rectangle(shot, (_fhx1, _fhy1), (_fhx2, _fhy2), (0, 255, 255), 1)
+                    # Crosshair marker
+                    cv2.drawMarker(shot, (center[0], center[1]), (0, 0, 255), cv2.MARKER_CROSS, 10, 1)
                     cv2.putText(shot, "valorant-vision v4", (25, 18),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
                     disp = cv2.resize(shot, (384, 216))
