@@ -6,3 +6,4 @@ dataset/
 __pycache__/
 *.pyc
 yolov8n.pt
+ow2-v5-dataset/
