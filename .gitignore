@@ -9,3 +9,5 @@ yolov8n.pt
 ow2-v5-dataset/
 val-dataset/
 valrant-dataset/
+v5-combined/
+v5-train/
