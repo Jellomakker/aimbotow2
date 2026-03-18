@@ -368,13 +368,14 @@ class Detection:
         mw, mh = s["monitorWidth"], s["monitorHeight"]
         sc = s["monitorScale"]
 
-        # Capture a centered region of the screen
-        cap_w = int(mw / sc)
-        cap_h = int(mh / sc)
-        left = int((mw - cap_w) / 2)
-        top = int((mh - cap_h) / 2)
-        monitor = {"left": left, "top": top, "width": cap_w, "height": cap_h}
-        center = [cap_w // 2, cap_h // 2]
+        # Capture a SQUARE centered region (matches 640x640 training data)
+        side = int(min(mw, mh) / sc)
+        cap_w = side
+        cap_h = side
+        left = int((mw - side) / 2)
+        top = int((mh - side) / 2)
+        monitor = {"left": left, "top": top, "width": side, "height": side}
+        center = [side // 2, side // 2]
 
         model_path = _resolve_model(s["model"])
         if not os.path.isfile(model_path):
@@ -709,7 +710,7 @@ class Detection:
                     cv2.drawMarker(shot, (center[0], center[1]), (0, 0, 255), cv2.MARKER_CROSS, 10, 1)
                     cv2.putText(shot, "valorant-vision v4", (25, 18),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
-                    disp = cv2.resize(shot, (384, 216))
+                    disp = cv2.resize(shot, (400, 400))
                     cv2.imshow("valorant-vision", disp)
                     if cv2.waitKey(1) == ord("l"):
                         break
