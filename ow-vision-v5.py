@@ -19,6 +19,16 @@ import time
 import random
 import threading
 import ctypes
+
+# Make process DPI-aware on Windows (critical for correct screen capture coords)
+if sys.platform == "win32":
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor DPI aware
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -34,6 +44,22 @@ _MODEL_URLS = {
     "v3-roboflow.pt": "https://github.com/Jellomakker/aimbotow2/raw/main/ow-vision/models/v3-roboflow.pt",
 }
 
+# Expected SHA-256 (first 16 hex chars) — forces re-download if model was updated
+_MODEL_HASHES = {
+    "v5-ow2.pt": "ece600482a048f9d",
+    "v4-valorant.pt": "c1c3264704b6dab2",
+    "v3-roboflow.pt": "43b91a42e080207b",
+}
+
+
+def _file_hash(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]
+
 
 def _download_model(name, status_cb=None):
     """Download a model from GitHub if available."""
@@ -42,8 +68,14 @@ def _download_model(name, status_cb=None):
         return None
     os.makedirs(_MODELS_DIR, exist_ok=True)
     dest = os.path.join(_MODELS_DIR, name)
+    # Re-download if file is missing or checksum doesn\'t match (model updated)
     if os.path.isfile(dest):
-        return dest
+        expected = _MODEL_HASHES.get(name)
+        if expected is None or _file_hash(dest) == expected:
+            return dest
+        if status_cb:
+            status_cb(f"Model {name} outdated — re-downloading…")
+        os.remove(dest)
     if status_cb:
         status_cb(f"Downloading {name}…")
     try:
