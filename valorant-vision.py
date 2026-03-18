@@ -433,71 +433,16 @@ class Detection:
                 shot = np.array(stc.grab(monitor))
                 shot = cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
 
-                # --- SAHI-style tiled + multi-zoom detection ---
-                fh, fw = shot.shape[:2]
-                all_dets = []
+                # --- Single-pass detection (fast + reliable) ---
                 _pa = dict(save=False, classes=s["detect"], iou=0.45,
                            imgsz=640, verbose=False, device=device, half=False)
 
-                # Pass 1: full frame at normal confidence
                 r1 = model.predict(shot, conf=s["confidence"], **_pa)
                 if r1[0].boxes is not None and len(r1[0].boxes):
-                    all_dets.extend(r1[0].boxes.data.cpu().numpy().tolist())
-
-                # Pass 2-5: 2x2 overlapping tiles (each ~60% of frame)
-                # Small targets appear ~1.7x bigger in each tile
-                tile_conf = max(0.08, s["confidence"] - 0.15)
-                tw = int(fw * 0.6)
-                th = int(fh * 0.6)
-                step_x = max(1, (fw - tw) // 1)  # 2 positions: 0 and step_x
-                step_y = max(1, (fh - th) // 1)
-                for ty in [0, step_y]:
-                    for tx in [0, step_x]:
-                        tile = shot[ty:ty+th, tx:tx+tw]
-                        tile_up = cv2.resize(tile, (fw, fh),
-                                             interpolation=cv2.INTER_LINEAR)
-                        rt = model.predict(tile_up, conf=tile_conf, **_pa)
-                        if rt[0].boxes is not None and len(rt[0].boxes):
-                            sx, sy = tw / fw, th / fh
-                            for det in rt[0].boxes.data.cpu().numpy().tolist():
-                                all_dets.append([
-                                    det[0]*sx + tx, det[1]*sy + ty,
-                                    det[2]*sx + tx, det[3]*sy + ty,
-                                    det[4], det[5]])
-
-                # Pass 6: deep center 4x zoom (very far targets)
-                cw4, ch4 = fw // 4, fh // 4
-                cx0 = fw // 2 - cw4 // 2
-                cy0 = fh // 2 - ch4 // 2
-                deep = cv2.resize(shot[cy0:cy0+ch4, cx0:cx0+cw4],
-                                  (fw, fh), interpolation=cv2.INTER_LINEAR)
-                rd = model.predict(deep, conf=tile_conf, **_pa)
-                if rd[0].boxes is not None and len(rd[0].boxes):
-                    sx4, sy4 = cw4 / fw, ch4 / fh
-                    for det in rd[0].boxes.data.cpu().numpy().tolist():
-                        all_dets.append([
-                            det[0]*sx4 + cx0, det[1]*sy4 + cy0,
-                            det[2]*sx4 + cx0, det[3]*sy4 + cy0,
-                            det[4], det[5]])
-
-                # NMS deduplication
-                if all_dets:
-                    all_dets.sort(key=lambda d: -d[4])
-                    keep = []
-                    for d in all_dets:
-                        dup = False
-                        for k in keep:
-                            ix1, iy1 = max(d[0],k[0]), max(d[1],k[1])
-                            ix2, iy2 = min(d[2],k[2]), min(d[3],k[3])
-                            inter = max(0,ix2-ix1)*max(0,iy2-iy1)
-                            union = (d[2]-d[0])*(d[3]-d[1])+(k[2]-k[0])*(k[3]-k[1])-inter
-                            if union > 0 and inter/union > 0.3:
-                                dup = True; break
-                        if not dup:
-                            keep.append(d)
-                    df = pd.DataFrame(keep, columns=["xmin","ymin","xmax","ymax","conf","class"])
+                    dets = r1[0].boxes.data.cpu().numpy().tolist()
+                    df = pd.DataFrame(dets, columns=["xmin", "ymin", "xmax", "ymax", "conf", "class"])
                 else:
-                    df = pd.DataFrame(columns=["xmin","ymin","xmax","ymax","conf","class"])
+                    df = pd.DataFrame(columns=["xmin", "ymin", "xmax", "ymax", "conf", "class"])
 
                 # Depth estimation (run every N frames)
                 if use_depth and depth_pipe and frame_count % depth_frame_interval == 0:
@@ -884,7 +829,7 @@ class App(tk.Tk):
         f3 = tk.Frame(row, bg=self.BG)
         f3.grid(row=0, column=2, sticky="ew", padx=(6, 0))
         self._add_label(f3, "CONFIDENCE")
-        self._conf_var = tk.StringVar(value="0.40")
+        self._conf_var = tk.StringVar(value="0.25")
         self._make_entry(f3, self._conf_var)
 
         # Trigger delay row (min / max)
@@ -1287,7 +1232,7 @@ class App(tk.Tk):
             "detect": detect,
             "toggleKey": self._key_var.get() or "`",
             "cooldown": self._sf(self._cd_var.get(), 0.3),
-            "confidence": self._sf(self._conf_var.get(), 0.35),
+            "confidence": self._sf(self._conf_var.get(), 0.25),
             "triggerMinDelay": self._sf(self._delay_min_var.get(), 0),
             "triggerMaxDelay": self._sf(self._delay_max_var.get(), 0),
             "monitorWidth": self._si(self._w_var.get(), 1920),
