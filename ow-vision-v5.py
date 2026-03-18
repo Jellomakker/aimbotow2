@@ -437,9 +437,8 @@ class Detection:
                 # --- SAHI-style tiled + multi-zoom detection ---
                 fh, fw = shot.shape[:2]
                 all_dets = []
-                # Match imgsz to training size (v5 trained at 416)
-                _model_name = s["model"].split("/")[-1].split("\\")[-1].lower()
-                _imgsz = 416 if "v5" in _model_name else 640
+                # Always use 640 for inference (better detection even for v5 trained at 416)
+                _imgsz = 640
                 _pa = dict(save=False, classes=s["detect"], iou=0.45,
                            imgsz=_imgsz, verbose=False, device=device, half=False)
 
@@ -888,7 +887,7 @@ class App(tk.Tk):
         f3 = tk.Frame(row, bg=self.BG)
         f3.grid(row=0, column=2, sticky="ew", padx=(6, 0))
         self._add_label(f3, "CONFIDENCE")
-        self._conf_var = tk.StringVar(value="0.40")
+        self._conf_var = tk.StringVar(value="0.25")
         self._make_entry(f3, self._conf_var)
 
         # Trigger delay row (min / max)
@@ -1295,7 +1294,7 @@ class App(tk.Tk):
             "detect": detect,
             "toggleKey": self._key_var.get() or "`",
             "cooldown": self._sf(self._cd_var.get(), 0.3),
-            "confidence": self._sf(self._conf_var.get(), 0.35),
+            "confidence": self._sf(self._conf_var.get(), 0.25),
             "triggerMinDelay": self._sf(self._delay_min_var.get(), 0),
             "triggerMaxDelay": self._sf(self._delay_max_var.get(), 0),
             "monitorWidth": self._si(self._w_var.get(), 1920),
